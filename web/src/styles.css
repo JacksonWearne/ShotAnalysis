@@ -683,11 +683,9 @@ legend {
 }
 
 .page-average .viz-top {
-  grid-template-columns: minmax(0, 340px) minmax(0, 1fr);
-  justify-content: center;
-  height: 320px;
-  width: min(880px, 100%);
-  margin: 0 auto;
+  grid-template-columns: minmax(0, 380px) minmax(0, 300px) minmax(240px, 1fr);
+  height: 400px;
+  width: 100%;
 }
 
 .page-average .viz-top .graph-frame {

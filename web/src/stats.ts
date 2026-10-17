@@ -269,6 +269,47 @@ function mean(values: number[]): number | null {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
+export type Spread = {
+  label: string;
+  unit: string;
+  digits: number;
+  median: number;
+  p10: number;
+  p25: number;
+  p75: number;
+  p90: number;
+  domain: [number, number];
+};
+
+const SPREAD_SPECS: { label: string; unit: string; digits: number; domain: [number, number]; read: (shot: Shot) => number }[] = [
+  { label: "Release", unit: "ft", digits: 1, domain: [5.5, 9.5], read: (shot) => shot.relH },
+  { label: "Launch", unit: "°", digits: 0, domain: [35, 65], read: (shot) => shot.angle },
+  { label: "Apex", unit: "ft", digits: 1, domain: [12, 18], read: (shot) => shot.apex },
+  { label: "Touch", unit: "s", digits: 2, domain: [0, 2.5], read: (shot) => shot.touch },
+  { label: "Defender", unit: "ft", digits: 1, domain: [1, 8], read: (shot) => shot.defDist },
+];
+
+/** Where these shots cluster, and how wide that cluster is. */
+export function shotSpread(shots: Shot[]): Spread[] {
+  if (shots.length < 5) return [];
+  return SPREAD_SPECS.map((spec) => {
+    const values = shots.map(spec.read).filter((value) => Number.isFinite(value));
+    const p10 = quantile(values, 0.1);
+    const p90 = quantile(values, 0.9);
+    return {
+      label: spec.label,
+      unit: spec.unit,
+      digits: spec.digits,
+      median: quantile(values, 0.5),
+      p10,
+      p25: quantile(values, 0.25),
+      p75: quantile(values, 0.75),
+      p90,
+      domain: [Math.min(spec.domain[0], p10), Math.max(spec.domain[1], p90)],
+    };
+  });
+}
+
 export function summarize(shots: Shot[]): Summary {
   const makes = shots.reduce((sum, shot) => sum + shot.m, 0);
   return {

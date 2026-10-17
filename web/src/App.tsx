@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import { courtLayout, drawArc, drawCourt, drawLaunch, drawPreRelease3D, fitCanvas, flightXScale, invertGraphZoom, screenToCourt, sideOrbit, SIDE_ORBIT, ZOOM_SCALE, type GraphZoom, type OrbitView, type PrePoint, type PreTrail } from "./draw";
+import { courtLayout, drawArc, drawCourt, drawLaunch, drawPreRelease3D, drawVariation, fitCanvas, flightXScale, invertGraphZoom, screenToCourt, sideOrbit, SIDE_ORBIT, ZOOM_SCALE, type GraphZoom, type OrbitView, type PrePoint, type PreTrail } from "./draw";
 import {
   compareGroups,
   contestBreakdown,
@@ -9,6 +9,7 @@ import {
   leagueAngle,
   medianShot,
   samplePath,
+  shotSpread,
   shotSpot,
   summarize,
   type BreakdownRow,
@@ -289,6 +290,7 @@ function PlayerPane({
   const courtRef = useRef<HTMLCanvasElement>(null);
   const fullRef = useRef<HTMLCanvasElement>(null);
   const launchRef = useRef<HTMLCanvasElement>(null);
+  const spreadRef = useRef<HTMLCanvasElement>(null);
   const playRef = useRef({ playing: false, time: 0 });
   const clockRef = useRef<Record<View, { playing: boolean; time: number }>>({
     average: { playing: false, time: 0 },
@@ -513,6 +515,8 @@ function PlayerPane({
     }
     const launch = launchRef.current ? fitCanvas(launchRef.current) : null;
     if (launch && view === "average") drawLaunch(launch.ctx, launch.width, launch.height, stats.angle, leagueMean);
+    const spread = spreadRef.current ? fitCanvas(spreadRef.current) : null;
+    if (spread && view === "average") drawVariation(spread.ctx, spread.width, spread.height, shotSpread(filtered));
     if (court && view === "individual") {
       const marks = filtered
         .map((shot) => {
@@ -697,6 +701,15 @@ function PlayerPane({
                 canvasRef={launchRef}
                 canvasLabel="Launch angle versus the league"
                 frameClass="launch-angle"
+              />
+            ) : null}
+            {view === "average" ? (
+              <GraphFrame
+                caption="Consistency"
+                hint="The number above the mark is the typical shot. Under the bar, the darker pair is half of the shots and the lighter pair is the outer edges."
+                canvasRef={spreadRef}
+                canvasLabel="Variation in release, launch, apex, touch, and defender"
+                frameClass="consistency"
               />
             ) : null}
             {view === "individual" ? (
@@ -917,7 +930,7 @@ function PlayerSelect({
         }}
       >
         <span>{selected ? selected.name : allowNone ? "None" : "Select a player"}</span>
-        <small>{selected ? `${selected.team} · ${selected.jumpers} jump shots` : allowNone ? "Add a second player" : ""}</small>
+        <small>{selected ? selected.team : allowNone ? "Add a second player" : ""}</small>
       </button>
       {open ? (
         <div className="combo-menu" role="listbox" aria-label={label}>
@@ -952,9 +965,7 @@ function PlayerSelect({
                 onClick={() => close(item.id)}
               >
                 {item.name}
-                <small>
-                  {item.team} · {item.jumpers} jump shots
-                </small>
+                <small>{item.team}</small>
               </button>
             ))}
             {shown.length === 0 ? <p className="note">No players match.</p> : null}
@@ -1016,6 +1027,10 @@ const DOC_SECTIONS: { title: string; note?: string; items: { term: string; text:
       {
         term: "Launch angle",
         text: "The solid line is this player's mean launch angle. The dashed line is the league mean for jump shots with the same style, contest, range, and result.",
+      },
+      {
+        term: "Consistency",
+        text: "Release, launch, apex, touch, and defender for the shots that match the filters. The number above the mark is the typical shot. Under the bar, the darker pair is where half of the shots land, and the lighter pair is the outer edges. A shorter solid bar is more consistent.",
       },
       { term: "Full shot", text: "Ball height against distance to the rim." },
       { term: "Shot chart", text: "Green is a make, red is a miss. Click a spot to open that shot." },

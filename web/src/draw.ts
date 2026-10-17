@@ -807,6 +807,112 @@ export function drawLaunch(
   ctx.restore();
 }
 
+export function drawVariation(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  rows: { label: string; unit: string; digits: number; median: number; p10: number; p25: number; p75: number; p90: number; domain: [number, number] }[],
+) {
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  ctx.font = `12px ${FONT}`;
+  ctx.textBaseline = "alphabetic";
+  if (!rows.length) {
+    ctx.fillStyle = INK_SOFT;
+    ctx.fillText("Not enough shots.", 12, 22);
+    ctx.restore();
+    return;
+  }
+
+  const padX = 10;
+  const rowH = height / rows.length;
+  const gutter = 78;
+  rows.forEach((row, index) => {
+    const y = rowH * index;
+    const barH = Math.max(6, Math.min(10, rowH * 0.16));
+    const blockH = 16 + barH + 16;
+    const barY = y + (rowH - blockH) / 2 + 16;
+    const barX = padX + gutter;
+    const barW = Math.max(24, width - barX - padX);
+    const low = row.domain[0];
+    const high = row.domain[1];
+    const span = Math.max(high - low, 1e-6);
+    const xOf = (value: number) => barX + ((Math.min(high, Math.max(low, value)) - low) / span) * barW;
+
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = INK;
+    ctx.font = `600 13px ${FONT}`;
+    ctx.fillText(row.label, padX, barY + barH / 2);
+
+    ctx.fillStyle = "rgba(12, 35, 64, 0.08)";
+    ctx.beginPath();
+    ctx.roundRect(barX, barY, barW, barH, 4);
+    ctx.fill();
+
+    const outerL = xOf(row.p10);
+    const outerR = xOf(row.p90);
+    ctx.fillStyle = "rgba(12, 35, 64, 0.2)";
+    ctx.beginPath();
+    ctx.roundRect(outerL, barY, Math.max(2, outerR - outerL), barH, 4);
+    ctx.fill();
+
+    const innerL = xOf(row.p25);
+    const innerR = xOf(row.p75);
+    ctx.fillStyle = INK;
+    ctx.beginPath();
+    ctx.roundRect(innerL, barY, Math.max(3, innerR - innerL), barH, 3);
+    ctx.fill();
+
+    const mark = xOf(row.median);
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(mark - 1, barY - 1, 2, barH + 2);
+
+    const num = (value: number) => value.toFixed(row.digits);
+    ctx.textBaseline = "alphabetic";
+    ctx.textAlign = "center";
+    ctx.font = `600 12px ${FONT}`;
+    const typical = `${num(row.median)} ${row.unit}`;
+    const typicalW = ctx.measureText(typical).width;
+    const typicalX = Math.min(width - padX - typicalW / 2, Math.max(barX + typicalW / 2, mark));
+    ctx.fillStyle = INK;
+    ctx.fillText(typical, typicalX, barY - 5);
+
+    ctx.font = `11px ${FONT}`;
+    const below: { x: number; text: string; strong: boolean }[] = [
+      { x: outerL, text: num(row.p10), strong: false },
+      { x: innerL, text: num(row.p25), strong: true },
+      { x: innerR, text: num(row.p75), strong: true },
+      { x: outerR, text: num(row.p90), strong: false },
+    ];
+    const placed = below.map((item) => {
+      const textW = ctx.measureText(item.text).width;
+      return { ...item, textW, start: item.x - textW / 2 };
+    });
+    let cursor = barX;
+    for (const item of placed) {
+      item.start = Math.max(item.start, cursor);
+      cursor = item.start + item.textW + 3;
+    }
+    const overflow = cursor - 3 - (barX + barW);
+    if (overflow > 0) {
+      for (const item of placed) item.start -= overflow;
+    }
+    if (placed[0].start < 4) {
+      const shift = 4 - placed[0].start;
+      for (const item of placed) item.start += shift;
+    }
+    const belowY = barY + barH + 13;
+    for (const item of placed) {
+      ctx.textAlign = "left";
+      ctx.fillStyle = item.strong ? INK : INK_SOFT;
+      ctx.font = item.strong ? `600 11px ${FONT}` : `11px ${FONT}`;
+      ctx.fillText(item.text, item.start, belowY);
+    }
+  });
+  ctx.restore();
+}
+
 export type OrbitView = { yaw: number; pitch: number };
 
 const SIDE_PITCH = 0.16;
