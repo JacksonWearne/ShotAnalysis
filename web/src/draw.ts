@@ -1,10 +1,7 @@
-import type { CurvePoint } from "./stats";
+import { clipFlight, type CurvePoint } from "./stats";
+import { CORNER_X, CORNER_Y, COURT_H, COURT_W, HOOP_X, HOOP_Y, THREE_RADIUS } from "./court";
 import type { Shot } from "./types";
 
-const COURT_W = 50;
-const COURT_H = 47;
-const HOOP_X = 25;
-const HOOP_Y = 5.25;
 const INK = "#0c2340";
 const INK_SOFT = "rgba(12, 35, 64, 0.55)";
 const GRID = "rgba(12, 35, 64, 0.12)";
@@ -98,7 +95,7 @@ export function drawCourt(
     ctx.lineWidth = 1.5;
     ctx.strokeStyle = INK;
     ctx.beginPath();
-    selected.path.forEach((point, index) => {
+    clipFlight(selected).forEach((point, index) => {
       const [sx, sy] = pt(point[4], point[5]);
       if (index === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
@@ -187,14 +184,13 @@ function strokeHalfCourt(
   trace(ctx, arcPoints(pt, HOOP_X, HOOP_Y, 4, 0, Math.PI));
   ctx.stroke();
 
-  const cornerY = 5.25 + Math.sqrt(23.75 ** 2 - 22 ** 2);
-  trace(ctx, [pt(3, 0), pt(3, cornerY)]);
+  trace(ctx, [pt(CORNER_X, 0), pt(CORNER_X, CORNER_Y)]);
   ctx.stroke();
-  trace(ctx, [pt(47, 0), pt(47, cornerY)]);
+  trace(ctx, [pt(COURT_W - CORNER_X, 0), pt(COURT_W - CORNER_X, CORNER_Y)]);
   ctx.stroke();
-  const aRight = Math.atan2(cornerY - HOOP_Y, 47 - HOOP_X);
-  const aLeft = Math.atan2(cornerY - HOOP_Y, 3 - HOOP_X);
-  trace(ctx, arcPoints(pt, HOOP_X, HOOP_Y, 23.75, aRight, aLeft, 64));
+  const aRight = Math.atan2(CORNER_Y - HOOP_Y, COURT_W - CORNER_X - HOOP_X);
+  const aLeft = Math.atan2(CORNER_Y - HOOP_Y, CORNER_X - HOOP_X);
+  trace(ctx, arcPoints(pt, HOOP_X, HOOP_Y, THREE_RADIUS, aRight, aLeft, 64));
   ctx.stroke();
 
   trace(ctx, [pt(0, COURT_H), pt(COURT_W, COURT_H)]);

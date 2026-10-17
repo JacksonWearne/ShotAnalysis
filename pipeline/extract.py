@@ -336,14 +336,44 @@ def halfcourt(x: float, y: float, left_hoop: bool) -> tuple[float, float]:
     return y, x
 
 
-def shot_range(distance: float, baseline: float) -> str:
-    if distance < 8.0:
+# Same line as the chart: 23.75 ft above the break, 22 ft corners at 3 ft off the sideline.
+HOOP_X = 25.0
+HOOP_Y = 5.25
+THREE_RADIUS = 23.75
+CORNER_OFFSET = 22.0
+CORNER_X = HOOP_X - CORNER_OFFSET
+CORNER_Y = HOOP_Y + float(np.sqrt(THREE_RADIUS**2 - CORNER_OFFSET**2))
+
+
+def three_margin(x: float, y: float) -> float:
+    """Signed feet to the three-point line. Positive is behind the line."""
+    arc = float(np.hypot(x - HOOP_X, y - HOOP_Y)) - THREE_RADIUS
+    if y > CORNER_Y:
+        return arc
+    corner = (CORNER_X - x) if x <= HOOP_X else (x - (COURT_WID - CORNER_X))
+    if corner >= 0:
+        return corner
+    return max(arc, corner)
+
+
+def classify_range(
+    feet_x: float,
+    feet_y: float,
+    ball_dist: float,
+    text_dist: int | None,
+    text_three: bool,
+) -> str:
+    if ball_dist < 8.0:
         return "rim"
-    if baseline <= 14.0:
-        three = distance >= 22.0
-    else:
-        three = distance >= 23.75
-    return "three" if three else "mid"
+    margin = three_margin(feet_x, feet_y)
+    geometric = "three" if margin >= 0 else "mid"
+    # Within a foot of the line, the play-by-play call breaks the tie.
+    if abs(margin) <= 1.0 and text_dist is not None:
+        if text_three:
+            return "three"
+        if text_dist < 23:
+            return "mid"
+    return geometric
 
 
 def extract_shot(frames: dict, info: dict) -> tuple[dict | None, str]:
@@ -424,7 +454,10 @@ def extract_shot(frames: dict, info: dict) -> tuple[dict | None, str]:
             break
 
     release_dist = float(np.hypot(x[release] - hoop[0], y[release] - hoop[1]))
-    baseline = float(x[release] if left else COURT_LEN - x[release])
+    if np.isfinite(shooter_xy[release, 0]):
+        feet_x, feet_y = halfcourt(float(shooter_xy[release, 0]), float(shooter_xy[release, 1]), left)
+    else:
+        feet_x, feet_y = halfcourt(float(x[release]), float(y[release]), left)
 
     # Possession and dribbles, walking back from the release.
     poss = release
@@ -522,13 +555,7 @@ def extract_shot(frames: dict, info: dict) -> tuple[dict | None, str]:
         "m": 1 if info["made"] else 0,
         "a": action,
         "j": 1 if is_jumper(action) else 0,
-        "r": (
-            "three"
-            if text_three and release_dist >= 18.0
-            else "mid"
-            if text_dist is not None and not text_three and text_dist < 23 and release_dist >= 8.0
-            else shot_range(release_dist, baseline)
-        ),
+        "r": classify_range(feet_x, feet_y, release_dist, text_dist, text_three),
         "s": style,
         "k": contest,
         "defDist": rnd(defender[0], 1),

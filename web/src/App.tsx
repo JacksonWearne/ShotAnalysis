@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import { courtLayout, drawArc, drawCourt, drawFloor, drawLaunch, fitCanvas, flightXScale, invertGraphZoom, preLayout, screenToCourt, type FloorPoint, type GraphZoom } from "./draw";
+import { courtLayout, drawArc, drawCourt, drawFloor, drawLaunch, fitCanvas, flightXScale, invertGraphZoom, preLayout, screenToCourt, ZOOM_SCALE, type FloorPoint, type GraphZoom } from "./draw";
 import {
   compareGroups,
   contestBreakdown,
+  clipFlight,
+  displayRange,
   filterShots,
   leagueAngle,
   medianShot,
-  releaseCourt,
   samplePath,
+  shotSpot,
   summarize,
   type BreakdownRow,
   type CurvePoint,
@@ -91,6 +93,8 @@ export function App() {
   const [compareId, setCompareId] = useState<number | null>(null);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [view, setView] = useState<View>("average");
+  const [docsOpen, setDocsOpen] = useState(false);
+  const [zoomPages, setZoomPages] = useState<Record<View, boolean>>({ average: false, individual: false });
   const [showTypes, setShowTypes] = useState(false);
   const [league, setLeague] = useState<LeagueCell[] | null>(null);
   const primary = usePlayer(playerId);
@@ -117,6 +121,7 @@ export function App() {
   }, []);
 
   const players = catalog?.players ?? [];
+  const zoomOn = zoomPages[view];
 
   return (
     <div className="app">
@@ -125,19 +130,28 @@ export function App() {
           <h1>Shot Arc</h1>
           <p>2015–16 SportVU. Paths are the ball, not a player’s joints.</p>
         </div>
-        <div className="views" role="tablist" aria-label="Page">
-          {(
-            [
-              ["average", "Average"],
-              ["individual", "Individual"],
-            ] as const
-          ).map(([id, label]) => (
-            <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)}>
-              {label}
-            </button>
-          ))}
+        <div className="topbar-controls">
+          <div className="views" role="tablist" aria-label="Page">
+            {(
+              [
+                ["average", "Average"],
+                ["individual", "Individual"],
+              ] as const
+            ).map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <SettingsMenu
+            zoomOn={zoomOn}
+            docsOpen={docsOpen}
+            onZoom={() => setZoomPages((pages) => ({ ...pages, [view]: !pages[view] }))}
+            onDocs={() => setDocsOpen((open) => !open)}
+          />
         </div>
       </header>
+      {docsOpen ? <DocsOverlay onClose={() => setDocsOpen(false)} /> : null}
       <div className={compareId != null ? "workspace compare" : "workspace"}>
         <aside className="panel sidebar">
           <div className="sidebar-block">
@@ -217,6 +231,7 @@ export function App() {
             player={primary.player}
             filters={filters}
             view={view}
+            zoomOn={zoomOn}
             showTypes={showTypes}
             onShowTypes={setShowTypes}
             onOpenIndividual={() => setView("individual")}
@@ -234,6 +249,7 @@ export function App() {
               player={compared.player}
               filters={filters}
               view={view}
+              zoomOn={zoomOn}
               showTypes={showTypes}
               onShowTypes={setShowTypes}
               onOpenIndividual={() => setView("individual")}
@@ -254,6 +270,7 @@ function PlayerPane({
   player,
   filters,
   view,
+  zoomOn,
   showTypes,
   onShowTypes,
   onOpenIndividual,
@@ -262,6 +279,7 @@ function PlayerPane({
   player: PlayerFile;
   filters: Filters;
   view: View;
+  zoomOn: boolean;
   showTypes: boolean;
   onShowTypes: (value: boolean) => void;
   onOpenIndividual: () => void;
@@ -270,9 +288,9 @@ function PlayerPane({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [playTime, setPlayTime] = useState(0);
-  const [preZoom, setPreZoom] = useState<GraphZoom>({ on: false, panX: 0, panY: 0 });
-  const [courtZoom, setCourtZoom] = useState<GraphZoom>({ on: false, panX: 0, panY: 0 });
-  const [fullZoom, setFullZoom] = useState<GraphZoom>({ on: false, panX: 0, panY: 0 });
+  const [preZoom, setPreZoom] = useState<GraphZoom>(FIT_ZOOM);
+  const [courtZoom, setCourtZoom] = useState<GraphZoom>(FIT_ZOOM);
+  const [fullZoom, setFullZoom] = useState<GraphZoom>(FIT_ZOOM);
   const [shotsOpen, setShotsOpen] = useState(true);
   const preRef = useRef<HTMLCanvasElement>(null);
   const courtRef = useRef<HTMLCanvasElement>(null);
@@ -281,9 +299,13 @@ function PlayerPane({
   const playRef = useRef({ playing: false, time: 0 });
   const pathRef = useRef<number[][]>([]);
   const paintRef = useRef<() => void>(() => {});
-  const preDrag = useRef<Drag | null>(null);
-  const courtDrag = useRef<Drag | null>(null);
-  const fullDrag = useRef<Drag | null>(null);
+
+  useEffect(() => {
+    if (zoomOn) return;
+    setPreZoom(FIT_ZOOM);
+    setCourtZoom(FIT_ZOOM);
+    setFullZoom(FIT_ZOOM);
+  }, [zoomOn]);
 
   const filtered = useMemo(() => filterShots(player.shots, filters), [player, filters]);
   const selected = filtered.find((shot) => shotId(shot) === selectedId) ?? null;
@@ -301,7 +323,7 @@ function PlayerPane({
   const leagueMean = useMemo(() => (league ? leagueAngle(league, filters) : null), [league, filters]);
   const representative = (byType ? groupCurves[0]?.shot : median) ?? median;
   const playback = (view === "individual" ? selected ?? median : representative) ?? null;
-  const activePath = playback?.path ?? [];
+  const activePath = playback ? clipFlight(playback) : [];
   const t0 = activePath[0]?.[0] ?? 0;
   const t1 = activePath[activePath.length - 1]?.[0] ?? 1;
 
@@ -366,7 +388,7 @@ function PlayerPane({
     const sample = activePath.length ? samplePath(activePath, playRef.current.time) : null;
     const ball = sample ? { f: sample[1], z: sample[3] } : null;
     const focus = playback;
-    const focusPath = focus?.path ?? [];
+    const focusPath = focus ? clipFlight(focus) : [];
     const focusSample = focusPath.length ? samplePath(focusPath, playRef.current.time) : null;
     const focusRelease = throughRelease(focusPath).at(-1) ?? null;
     const preBall = focusSample ? (focusSample[0] <= 0 ? { f: focusSample[1], z: focusSample[3] } : focusRelease) : null;
@@ -481,7 +503,7 @@ function PlayerPane({
     if (court && view === "individual") {
       const marks = filtered
         .map((shot) => {
-          const spot = releaseCourt(shot);
+          const spot = shotSpot(shot);
           if (!spot) return null;
           return { shot, x: spot[0], y: spot[1], selected: selected != null && shotId(shot) === shotId(selected) };
         })
@@ -502,23 +524,25 @@ function PlayerPane({
     setPlaying(true);
   }
 
-  function pickCourt(event: ReactPointerEvent<HTMLCanvasElement>) {
+  function pickCourt(event: React.MouseEvent<HTMLCanvasElement>) {
     const canvas = courtRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const layout = courtLayout(rect.width, rect.height);
+    const localX = event.clientX - rect.left;
+    const localY = event.clientY - rect.top;
     const [px, py] = invertGraphZoom(
-      event.clientX - rect.left,
-      event.clientY - rect.top,
+      localX,
+      localY,
       rect.width,
       rect.height,
-      courtZoom,
+      zoomOn ? zoomAt(localX, localY, rect.width, rect.height) : FIT_ZOOM,
     );
     const [x, y] = screenToCourt(px, py, layout);
     let best: Shot | null = null;
     let bestDist = 1.6;
     for (const shot of filtered) {
-      const spot = releaseCourt(shot);
+      const spot = shotSpot(shot);
       if (!spot) continue;
       const distance = Math.hypot(spot[0] - x, spot[1] - y);
       if (distance < bestDist) {
@@ -588,11 +612,11 @@ function PlayerPane({
           </div>
         ) : view === "average" && median ? (
           <p className="context">
-            Median of the filtered shots · {formatDate(median.d)} · {median.a}
+            One real attempt whose flight is closest to the median · {formatDate(median.d)} · {median.a}
           </p>
         ) : selected ? (
           <p className="context">
-            {formatDate(selected.d)} · Q{selected.p} {selected.c} · {selected.a} · {STYLE_LABEL[selected.s]} · {CONTEST_LABEL[selected.k]} · {RANGE_LABEL[selected.r]}
+            {formatDate(selected.d)} · Q{selected.p} {selected.c} · {selected.a} · {STYLE_LABEL[selected.s]} · {CONTEST_LABEL[selected.k]} · {RANGE_LABEL[displayRange(selected)]}
             {median && shotId(median) !== shotId(selected) ? " · Dashed line is the median shot." : ""}
           </p>
         ) : null}
@@ -605,18 +629,14 @@ function PlayerPane({
                   ? "Release shape, stopped when the ball leaves the hand."
                   : "Floor path and release shape, stopped at release."
               }
-              zoom={preZoom}
-              onToggle={() => setPreZoom((zoom) => ({ on: !zoom.on, panX: 0, panY: 0 }))}
+              hoverZoom={zoomOn}
               canvasRef={preRef}
               canvasLabel={view === "average" ? "Pre-release form" : "Pre-release on the floor versus the rim"}
-              onPointerDown={(event) => beginDrag(event, preZoom, preDrag)}
-              onPointerMove={(event) => dragZoom(event, preDrag, setPreZoom)}
-              onPointerUp={() => {
-                preDrag.current = null;
+              onPointerMove={(event) => {
+                if (!zoomOn) return;
+                setPreZoom(zoomForCanvas(event, view === "individual"));
               }}
-              onPointerCancel={() => {
-                preDrag.current = null;
-              }}
+              onPointerLeave={() => setPreZoom(FIT_ZOOM)}
             />
             {view === "average" ? (
               <GraphFrame
@@ -630,39 +650,30 @@ function PlayerPane({
               <GraphFrame
                 caption="Shot chart"
                 hint="Green is a make, red is a miss. Click a spot to open it."
-                zoom={courtZoom}
-                onToggle={() => setCourtZoom((zoom) => ({ on: !zoom.on, panX: 0, panY: 0 }))}
+                hoverZoom={zoomOn}
                 canvasRef={courtRef}
                 canvasLabel="Shot chart"
-                onPointerDown={(event) => beginDrag(event, courtZoom, courtDrag)}
-                onPointerMove={(event) => dragZoom(event, courtDrag, setCourtZoom)}
-                onPointerUp={(event) => {
-                  const moved = courtDrag.current?.moved ?? false;
-                  courtDrag.current = null;
-                  if (!moved) pickCourt(event);
+                onClick={pickCourt}
+                onPointerMove={(event) => {
+                  if (!zoomOn) return;
+                  setCourtZoom(zoomForCanvas(event, false));
                 }}
-                onPointerCancel={() => {
-                  courtDrag.current = null;
-                }}
+                onPointerLeave={() => setCourtZoom(FIT_ZOOM)}
               />
             ) : null}
           </div>
           <GraphFrame
             caption="Full shot"
             hint="Ball height versus distance to the rim."
-            zoom={fullZoom}
-            onToggle={() => setFullZoom((zoom) => ({ on: !zoom.on, panX: 0, panY: 0 }))}
+            hoverZoom={zoomOn}
             canvasRef={fullRef}
             canvasLabel="Full shot"
             frameClass="full-shot"
-            onPointerDown={(event) => beginDrag(event, fullZoom, fullDrag)}
-            onPointerMove={(event) => dragZoom(event, fullDrag, setFullZoom)}
-            onPointerUp={() => {
-              fullDrag.current = null;
+            onPointerMove={(event) => {
+              if (!zoomOn) return;
+              setFullZoom(zoomForCanvas(event, false));
             }}
-            onPointerCancel={() => {
-              fullDrag.current = null;
-            }}
+            onPointerLeave={() => setFullZoom(FIT_ZOOM)}
           />
         </div>
         <div className="transport">
@@ -740,7 +751,7 @@ function PlayerPane({
                       <span className={shot.m ? "result-make" : "result-miss"}>{shot.m ? "Make" : "Miss"}</span>
                     </span>
                     <small>
-                      {shot.a} · {STYLE_LABEL[shot.s]} · {CONTEST_LABEL[shot.k]} · {RANGE_LABEL[shot.r]}
+                      {shot.a} · {STYLE_LABEL[shot.s]} · {CONTEST_LABEL[shot.k]} · {RANGE_LABEL[displayRange(shot)]}
                     </small>
                   </button>
                 </div>
@@ -901,31 +912,235 @@ function PlayerSelect({
   );
 }
 
-type Drag = { x: number; y: number; panX: number; panY: number; moved: boolean; active: boolean };
+const DOC_SECTIONS: { title: string; note?: string; items: { term: string; text: string }[] }[] = [
+  {
+    title: "Style",
+    items: [
+      {
+        term: "Catch and shoot",
+        text: "No dribble. The ball stays within 3.8 feet of the shooter for 0.08 to 2 seconds before release.",
+      },
+      {
+        term: "Pull-up",
+        text: "At least one dribble before release. A dribble is the ball dropping to 2.5 feet or lower and rising at least 1.5 feet. The next one counts only after 0.28 seconds.",
+      },
+      {
+        term: "Other",
+        text: "No dribble, and the touch is shorter than 0.08 seconds or longer than 2 seconds. A hold without a dribble lands here, and so does a tip or putback the tracking barely caught.",
+      },
+    ],
+  },
+  {
+    title: "Contest",
+    items: [
+      { term: "Open", text: "The nearest defender is at least 4 feet away at release." },
+      { term: "Contested", text: "The nearest defender is inside 4 feet at release." },
+    ],
+  },
+  {
+    title: "Measures",
+    note: "On Average, each number is the mean of the shots that match the filters. On Individual, it is that shot.",
+    items: [
+      { term: "Shots", text: "Attempts that match the filters." },
+      { term: "FG%", text: "Makes divided by those attempts." },
+      { term: "Release", text: "Height of the ball, in feet, when it leaves the hand." },
+      { term: "Launch", text: "Angle of the ball, in degrees, during the first 0.08 seconds after release." },
+      { term: "Apex", text: "Highest point of the ball on the flight, in feet." },
+      {
+        term: "Touch",
+        text: "Average seconds the player has the ball in his hands before shooting.",
+      },
+      { term: "Defender", text: "Distance, in feet, to the nearest opponent at release." },
+    ],
+  },
+  {
+    title: "Charts",
+    items: [
+      {
+        term: "Pre-release",
+        text: "On Average, the release shape, stopped when the ball leaves the hand. On Individual, the floor path and that same release shape.",
+      },
+      {
+        term: "Launch angle",
+        text: "The solid line is this player's mean launch angle. The dashed line is the league mean for jump shots with the same style, contest, range, and result.",
+      },
+      { term: "Full shot", text: "Ball height against distance to the rim." },
+      { term: "Shot chart", text: "Green is a make, red is a miss. Click a spot to open that shot." },
+      {
+        term: "Playback",
+        text: "Quarter speed. Each dot is 0.04 seconds. On the close-up, lighter blue is slower.",
+      },
+    ],
+  },
+  {
+    title: "Individual",
+    items: [
+      {
+        term: "Median line",
+        text: "A dashed line of the median shot, drawn when the opened shot is a different attempt.",
+      },
+      { term: "Shot list", text: "The attempts that match the filters, grouped by date." },
+    ],
+  },
+  {
+    title: "Controls",
+    items: [
+      {
+        term: "Zoom",
+        text: "Turn it on in this menu. The chart under the pointer magnifies. Average and Individual each keep their own switch.",
+      },
+      { term: "Compare", text: "A second player, using the same filters and the same page." },
+    ],
+  },
+];
 
-function beginDrag(event: ReactPointerEvent<HTMLCanvasElement>, zoom: GraphZoom, store: { current: Drag | null }) {
-  store.current = {
-    x: event.clientX,
-    y: event.clientY,
-    panX: zoom.panX,
-    panY: zoom.panY,
-    moved: false,
-    active: zoom.on,
-  };
-  if (zoom.on) event.currentTarget.setPointerCapture(event.pointerId);
+function DocsOverlay({ onClose }: { onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCloseRef.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
+  return (
+    <div className="docs-backdrop" onMouseDown={onClose}>
+      <div
+        className="docs"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="docs-title"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="docs-bar">
+          <h2 id="docs-title">Docs</h2>
+          <button ref={closeRef} type="button" className="docs-close" onClick={onClose}>
+            Close
+          </button>
+        </div>
+        <div className="docs-sheet">
+          <header className="docs-lead">
+            <p className="lede">
+              How the labels on this page are measured. Paths are the ball, from the 2015–16 SportVU games released before the feed was removed. The charts keep jump shots released at least 8 feet from the rim, with a path that travels toward the basket and comes down. Layups, dunks, tips, and rim attempts stay out.
+            </p>
+          </header>
+          {DOC_SECTIONS.map((section) => (
+            <section key={section.title} className="docs-section">
+              <h3 className="section">{section.title}</h3>
+              {section.note ? <p className="context">{section.note}</p> : null}
+              <dl>
+                {section.items.map((item) => (
+                  <div key={item.term} className="docs-term">
+                    <dt>{item.term}</dt>
+                    <dd>{item.text}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function dragZoom(
-  event: ReactPointerEvent<HTMLCanvasElement>,
-  store: { current: Drag | null },
-  setZoom: (zoom: GraphZoom) => void,
-) {
-  const drag = store.current;
-  if (!drag?.active) return;
-  const dx = event.clientX - drag.x;
-  const dy = event.clientY - drag.y;
-  if (Math.hypot(dx, dy) > 3) drag.moved = true;
-  setZoom({ on: true, panX: drag.panX + dx, panY: drag.panY + dy });
+function SettingsMenu({
+  zoomOn,
+  docsOpen,
+  onZoom,
+  onDocs,
+}: {
+  zoomOn: boolean;
+  docsOpen: boolean;
+  onZoom: () => void;
+  onDocs: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="settings" ref={rootRef}>
+      <button
+        type="button"
+        className="settings-button"
+        aria-label="Settings"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="settings-mark" aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="settings-menu" role="menu" aria-label="Settings">
+          <button type="button" className="settings-item" role="menuitemcheckbox" aria-checked={zoomOn} onClick={onZoom}>
+            <span>Zoom</span>
+            <span className={zoomOn ? "switch on" : "switch"} aria-hidden="true" />
+          </button>
+          <div className="settings-rule" role="separator" />
+          <button
+            type="button"
+            className="settings-item"
+            role="menuitem"
+            aria-pressed={docsOpen}
+            onClick={() => {
+              setOpen(false);
+              onDocs();
+            }}
+          >
+            <span>Docs</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const FIT_ZOOM: GraphZoom = { on: false, panX: 0, panY: 0 };
+
+function zoomAt(x: number, y: number, width: number, height: number): GraphZoom {
+  return {
+    on: true,
+    panX: (x - width / 2) * (1 - ZOOM_SCALE),
+    panY: (y - height / 2) * (1 - ZOOM_SCALE),
+  };
+}
+
+function zoomForCanvas(event: ReactPointerEvent<HTMLCanvasElement>, splitPre: boolean): GraphZoom {
+  const rect = event.currentTarget.getBoundingClientRect();
+  let x = event.clientX - rect.left;
+  let y = event.clientY - rect.top;
+  let width = rect.width;
+  let height = rect.height;
+  if (splitPre) {
+    const layout = preLayout(rect.width, rect.height);
+    const region = layout.stacked ? (y >= layout.form.y ? layout.form : layout.floor) : x >= layout.form.x ? layout.form : layout.floor;
+    x -= region.x;
+    y -= region.y;
+    width = region.w;
+    height = region.h;
+  }
+  return zoomAt(x, y, width, height);
 }
 
 function Choice<T extends string>({
@@ -992,7 +1207,7 @@ function formatClock(time: number): string {
 }
 
 function courtPoints(shot: Shot, untilRelease = false): FloorPoint[] {
-  const points = shot.path.map((point) => ({ t: point[0], x: point[4], y: point[5] }));
+  const points = clipFlight(shot).map((point) => ({ t: point[0], x: point[4], y: point[5] }));
   if (!untilRelease) return points;
   const kept: FloorPoint[] = [];
   for (const point of points) {
@@ -1076,27 +1291,23 @@ function clipToRelease(points: CurvePoint[]): CurvePoint[] {
 function GraphFrame({
   caption,
   hint,
-  zoom,
-  onToggle,
+  hoverZoom,
   canvasRef,
   canvasLabel,
   frameClass,
-  onPointerDown,
+  onClick,
   onPointerMove,
-  onPointerUp,
-  onPointerCancel,
+  onPointerLeave,
 }: {
   caption: string;
   hint?: string;
-  zoom?: GraphZoom;
-  onToggle?: () => void;
+  hoverZoom?: boolean;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   canvasLabel: string;
   frameClass?: string;
-  onPointerDown?: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
+  onClick?: (event: React.MouseEvent<HTMLCanvasElement>) => void;
   onPointerMove?: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
-  onPointerUp?: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
-  onPointerCancel?: () => void;
+  onPointerLeave?: () => void;
 }) {
   return (
     <figure className={frameClass ? `graph-frame ${frameClass}` : "graph-frame"}>
@@ -1104,26 +1315,14 @@ function GraphFrame({
         {caption}
         {hint ? <span className="graph-hint">{hint}</span> : null}
       </figcaption>
-      <div className={zoom?.on ? "graph zoomed" : "graph"}>
-        {zoom && onToggle ? (
-          <button
-            type="button"
-            className="zoom-toggle"
-            aria-pressed={zoom.on}
-            aria-label={zoom.on ? `Fit ${caption.toLowerCase()}` : `Zoom ${caption.toLowerCase()}`}
-            title={zoom.on ? "Drag to look around" : "Zoom in"}
-            onClick={onToggle}
-          >
-            {zoom.on ? "Fit" : "Zoom"}
-          </button>
-        ) : null}
+      <div className={hoverZoom ? "graph can-zoom" : "graph"}>
         <canvas
           ref={canvasRef}
           aria-label={canvasLabel}
-          onPointerDown={onPointerDown}
+          onClick={onClick}
+          onPointerEnter={onPointerMove}
           onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerCancel}
+          onPointerLeave={onPointerLeave}
         />
       </div>
     </figure>
@@ -1135,7 +1334,7 @@ function shotId(shot: Shot): string {
 }
 
 function asCurve(shot: Shot): CurvePoint[] {
-  return shot.path.map((point) => ({
+  return clipFlight(shot).map((point) => ({
     t: point[0],
     f: point[1],
     l: point[2],
