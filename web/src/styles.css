@@ -677,9 +677,9 @@ legend {
 
 .viz-top {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1.4fr) minmax(220px, 0.9fr);
   gap: 12px;
-  height: 300px;
+  height: 380px;
 }
 
 .page-average .viz-top {
@@ -722,6 +722,26 @@ legend {
   color: var(--ink);
 }
 
+.graph-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.view-reset {
+  flex: none;
+  background: var(--fill);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 3px 8px;
+  color: var(--navy);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.view-reset:hover { border-color: var(--line-strong); }
+
 .graph-hint {
   font-size: 12px;
   font-weight: 400;
@@ -742,6 +762,8 @@ canvas {
 }
 
 .graph.can-zoom canvas { cursor: zoom-in; }
+.graph.can-orbit canvas { cursor: grab; touch-action: none; }
+.graph.can-orbit canvas:active { cursor: grabbing; }
 
 .transport {
   background: var(--card);
@@ -968,6 +990,8 @@ canvas {
   width: 100%;
 }
 
+.workspace.compare .page-individual .viz-top .graph-frame.pre-release { height: 400px; }
+
 .workspace.compare .full-shot { height: 240px; }
 .workspace.compare .pane-shots {
   flex: none;
@@ -999,6 +1023,8 @@ canvas {
   .page-average .viz-top { height: auto; width: 100%; grid-template-columns: 1fr; }
   .page-average .viz-top .graph-frame,
   .workspace.compare .page-average .viz-top .graph-frame { height: 420px; width: min(420px, 100%); justify-self: center; }
+  .page-individual .viz-top .graph-frame.pre-release,
+  .workspace.compare .page-individual .viz-top .graph-frame.pre-release { height: 380px; width: 100%; }
   .pane-shots { max-height: 280px; }
   .stage.shots-collapsed .pane-shots { max-height: none; }
   .stage.shots-collapsed .shots-toggle {

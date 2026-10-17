@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
-import { courtLayout, drawArc, drawCourt, drawFloor, drawLaunch, fitCanvas, flightXScale, invertGraphZoom, preLayout, screenToCourt, ZOOM_SCALE, type FloorPoint, type GraphZoom } from "./draw";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { courtLayout, drawArc, drawCourt, drawLaunch, drawPreRelease3D, fitCanvas, flightXScale, invertGraphZoom, screenToCourt, sideOrbit, SIDE_ORBIT, ZOOM_SCALE, type GraphZoom, type OrbitView, type PrePoint, type PreTrail } from "./draw";
 import {
   compareGroups,
   contestBreakdown,
@@ -32,7 +32,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 const DEFAULT_FILTERS: Filters = {
   style: "all",
   contest: "all",
-  range: "all",
+  range: "three",
   result: "all",
 };
 
@@ -145,8 +145,10 @@ export function App() {
           </div>
           <SettingsMenu
             zoomOn={zoomOn}
+            threes={filters.range === "three"}
             docsOpen={docsOpen}
             onZoom={() => setZoomPages((pages) => ({ ...pages, [view]: !pages[view] }))}
+            onThrees={() => setFilters((current) => ({ ...current, range: current.range === "three" ? "mid" : "three" }))}
             onDocs={() => setDocsOpen((open) => !open)}
           />
         </div>
@@ -200,16 +202,6 @@ export function App() {
                   ["contested", "Contested", "Defender inside 4 feet"],
                 ]}
                 onChange={(contest) => setFilters({ ...filters, contest })}
-              />
-              <Choice
-                label="Range"
-                value={filters.range}
-                options={[
-                  ["all", "All", "Mid-range and three"],
-                  ["mid", "Mid-range"],
-                  ["three", "Three"],
-                ]}
-                onChange={(range) => setFilters({ ...filters, range })}
               />
               <Choice
                 label="Result"
@@ -288,24 +280,40 @@ function PlayerPane({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [playTime, setPlayTime] = useState(0);
-  const [preZoom, setPreZoom] = useState<GraphZoom>(FIT_ZOOM);
   const [courtZoom, setCourtZoom] = useState<GraphZoom>(FIT_ZOOM);
-  const [fullZoom, setFullZoom] = useState<GraphZoom>(FIT_ZOOM);
+  const [preZoom, setPreZoom] = useState<GraphZoom>(FIT_ZOOM);
+  const [fullZooms, setFullZooms] = useState<Record<View, GraphZoom>>({ average: FIT_ZOOM, individual: FIT_ZOOM });
+  const fullZoom = fullZooms[view];
   const [shotsOpen, setShotsOpen] = useState(true);
   const preRef = useRef<HTMLCanvasElement>(null);
   const courtRef = useRef<HTMLCanvasElement>(null);
   const fullRef = useRef<HTMLCanvasElement>(null);
   const launchRef = useRef<HTMLCanvasElement>(null);
   const playRef = useRef({ playing: false, time: 0 });
+  const clockRef = useRef<Record<View, { playing: boolean; time: number }>>({
+    average: { playing: false, time: 0 },
+    individual: { playing: false, time: 0 },
+  });
+  const viewRef = useRef(view);
   const pathRef = useRef<number[][]>([]);
   const paintRef = useRef<() => void>(() => {});
+  const orbitRef = useRef<OrbitView>({ ...SIDE_ORBIT });
+  const orbitDrag = useRef<{ x: number; y: number; yaw: number; pitch: number } | null>(null);
 
   useEffect(() => {
     if (zoomOn) return;
-    setPreZoom(FIT_ZOOM);
+    if (view === "average") {
+      setPreZoom(FIT_ZOOM);
+      setFullZooms((pages) => ({ ...pages, average: FIT_ZOOM }));
+      return;
+    }
     setCourtZoom(FIT_ZOOM);
-    setFullZoom(FIT_ZOOM);
-  }, [zoomOn]);
+    setFullZooms((pages) => ({ ...pages, individual: FIT_ZOOM }));
+  }, [zoomOn, view]);
+
+  function setFullZoom(zoom: GraphZoom) {
+    setFullZooms((pages) => ({ ...pages, [view]: zoom }));
+  }
 
   const filtered = useMemo(() => filterShots(player.shots, filters), [player, filters]);
   const selected = filtered.find((shot) => shotId(shot) === selectedId) ?? null;
@@ -331,15 +339,37 @@ function PlayerPane({
   if (!playing) playRef.current.time = playTime;
   pathRef.current = activePath;
 
+  const playbackId = playback ? shotId(playback) : "";
   const medianKey = median ? shotId(median) : "";
+  const representativeRef = useRef(representative);
+  representativeRef.current = representative;
+
+  useLayoutEffect(() => {
+    if (viewRef.current === view) return;
+    clockRef.current[viewRef.current] = { playing: playRef.current.playing, time: playRef.current.time };
+    const next = clockRef.current[view];
+    playRef.current.playing = next.playing;
+    playRef.current.time = next.time;
+    setPlaying(next.playing);
+    setPlayTime(next.time);
+    viewRef.current = view;
+  }, [view]);
+
   useEffect(() => {
-    if (view !== "average") return;
-    const start = pathRef.current[0]?.[0] ?? 0;
+    if (view !== "individual") return;
+    orbitRef.current = sideOrbit(pathRef.current);
+  }, [view, playbackId]);
+
+  useEffect(() => {
+    const shot = representativeRef.current;
+    const start = shot ? (clipFlight(shot)[0]?.[0] ?? 0) : 0;
+    clockRef.current.average = { playing: false, time: start };
+    if (viewRef.current !== "average") return;
     playRef.current.time = start;
     playRef.current.playing = false;
     setPlayTime(start);
     setPlaying(false);
-  }, [medianKey, view, byType]);
+  }, [medianKey, byType]);
 
   useEffect(() => {
     if (view !== "individual") return;
@@ -387,11 +417,6 @@ function PlayerPane({
     const court = courtRef.current ? fitCanvas(courtRef.current) : null;
     const sample = activePath.length ? samplePath(activePath, playRef.current.time) : null;
     const ball = sample ? { f: sample[1], z: sample[3] } : null;
-    const focus = playback;
-    const focusPath = focus ? clipFlight(focus) : [];
-    const focusSample = focusPath.length ? samplePath(focusPath, playRef.current.time) : null;
-    const focusRelease = throughRelease(focusPath).at(-1) ?? null;
-    const preBall = focusSample ? (focusSample[0] <= 0 ? { f: focusSample[1], z: focusSample[3] } : focusRelease) : null;
     const typeLines = groupCurves.filter((group) => group.shot.path.length > 1);
     const fullSeries = byType
       ? typeLines.map((group) => ({
@@ -410,34 +435,43 @@ function PlayerPane({
             : []),
         ];
     const rimDist = playback ? playback.dist : stats.distance;
-    const xScale = full
-      ? flightXScale(
-          full.width,
-          full.height,
-          fullSeries.flatMap((line) => line.points.map((point) => ({ f: point.f, z: point.z }))),
-          rimDist,
-        )
-      : 1;
-    if (pre) {
+    if (pre && view === "individual") {
+      const flight = playback ? clipFlight(playback) : [];
+      const after = flightPoints(flight);
+      const trails: PreTrail[] = playback
+        ? [
+            {
+              points: releasePoints(flight),
+              color: "#0c2340",
+              width: 3,
+              dash: [],
+              tempo: true,
+            },
+            ...(after.length > 1
+              ? [
+                  {
+                    points: after,
+                    color: "#0c2340",
+                    width: 2.4,
+                    dash: [1, 9],
+                  },
+                ]
+              : []),
+          ]
+        : [];
+      const spot = ballOnTrail(
+        flight.map((point) => ({ t: point[0], f: point[1], l: point[2], z: point[3], cx: point[4], cy: point[5] })),
+        playRef.current.time,
+      );
+      const balls = spot ? [{ cx: spot.cx, cy: spot.cy, z: spot.z, color: "#0c2340" }] : [];
+      drawPreRelease3D(pre.ctx, pre.width, pre.height, trails, balls, orbitRef.current);
+    }
+    if (pre && view === "average") {
       pre.ctx.clearRect(0, 0, pre.width, pre.height);
-      const layout = view === "individual" ? preLayout(pre.width, pre.height) : null;
-      if (layout) {
-        const floorShots = playback ? [{ shot: playback, color: "#0c2340", dash: [] as number[] }] : [];
-        drawFloor(
-          pre.ctx,
-          floorShots.map((group) => ({
-            color: group.color,
-            dash: group.dash,
-            ball: courtPoints(group.shot),
-            foot: footPoints(group.shot),
-          })),
-          floorBall(focusPath, focusSample, false),
-          focus ? sampleFoot(focus.foot, playRef.current.time) : null,
-          focus ? focus.dist : null,
-          preZoom,
-          layout.floor,
-        );
-      }
+      const focusPath = playback ? clipFlight(playback) : [];
+      const focusSample = focusPath.length ? samplePath(focusPath, playRef.current.time) : null;
+      const focusRelease = throughRelease(focusPath).at(-1) ?? null;
+      const preBall = focusSample ? (focusSample[0] <= 0 ? { f: focusSample[1], z: focusSample[3] } : focusRelease) : null;
       const formSeries = byType
         ? typeLines.map((group) => ({
             points: clipToRelease(asCurve(group.shot)),
@@ -445,21 +479,9 @@ function PlayerPane({
             width: 2.6,
             dash: group.dash,
             band: false,
-            ticks: timeTicks(group.shot.path, 0),
           }))
         : playback
           ? [
-              ...(view === "individual" && median && shotId(median) !== shotId(playback)
-                ? [
-                    {
-                      points: clipToRelease(asCurve(median)),
-                      color: "rgba(12, 35, 64, 0.4)",
-                      width: 1.5,
-                      dash: [5, 4],
-                      band: false,
-                    },
-                  ]
-                : []),
               {
                 points: clipToRelease(asCurve(playback)),
                 color: "#0c2340",
@@ -467,31 +489,22 @@ function PlayerPane({
                 dash: [] as number[],
                 band: false,
                 tempo: true,
-                ticks: timeTicks(playback.path, 0),
               },
             ]
           : [];
+      const xScale = full
+        ? flightXScale(
+            full.width,
+            full.height,
+            fullSeries.flatMap((line) => line.points.map((point) => ({ f: point.f, z: point.z }))),
+            rimDist,
+          )
+        : 1;
       drawArc(pre.ctx, pre.width, pre.height, [], formSeries, preBall, null, preZoom, {
         fit: true,
         tight: true,
-        region: layout?.form,
-        compact: layout != null,
         xScale,
       });
-      if (layout) {
-        pre.ctx.save();
-        pre.ctx.strokeStyle = "rgba(12, 35, 64, 0.16)";
-        pre.ctx.beginPath();
-        if (layout.stacked) {
-          pre.ctx.moveTo(10, layout.form.y - 4);
-          pre.ctx.lineTo(pre.width - 10, layout.form.y - 4);
-        } else {
-          pre.ctx.moveTo(layout.form.x - 5, 10);
-          pre.ctx.lineTo(layout.form.x - 5, pre.height - 10);
-        }
-        pre.ctx.stroke();
-        pre.ctx.restore();
-      }
     }
     if (full) {
       drawArc(full.ctx, full.width, full.height, [], fullSeries, ball, rimDist, fullZoom, {
@@ -612,7 +625,7 @@ function PlayerPane({
           </div>
         ) : view === "average" && median ? (
           <p className="context">
-            One real attempt whose flight is closest to the median · {formatDate(median.d)} · {median.a}
+            One real attempt whose arc and gather stay closest to the median · {formatDate(median.d)} · {median.a}
           </p>
         ) : selected ? (
           <p className="context">
@@ -622,28 +635,68 @@ function PlayerPane({
         ) : null}
         <div className="viz">
           <div className="viz-top">
-            <GraphFrame
-              caption="Pre-release"
-              hint={
-                view === "average"
-                  ? "Release shape, stopped when the ball leaves the hand."
-                  : "Floor path and release shape, stopped at release."
-              }
-              hoverZoom={zoomOn}
-              canvasRef={preRef}
-              canvasLabel={view === "average" ? "Pre-release form" : "Pre-release on the floor versus the rim"}
-              onPointerMove={(event) => {
-                if (!zoomOn) return;
-                setPreZoom(zoomForCanvas(event, view === "individual"));
-              }}
-              onPointerLeave={() => setPreZoom(FIT_ZOOM)}
-            />
+            {view === "average" ? (
+              <GraphFrame
+                caption="Pre-release"
+                hint="Release shape, stopped when the ball leaves the hand."
+                hoverZoom={zoomOn}
+                canvasRef={preRef}
+                canvasLabel="Pre-release form"
+                frameClass="pre-release"
+                onPointerMove={(event) => {
+                  if (!zoomOn) return;
+                  setPreZoom(zoomForCanvas(event));
+                }}
+                onPointerLeave={() => setPreZoom(FIT_ZOOM)}
+              />
+            ) : (
+              <GraphFrame
+                caption="Pre-release"
+                hint="Drag to move the view. The dotted line is the ball after release. Reset returns to a side view of the shot."
+                canvasRef={preRef}
+                canvasLabel="Three-dimensional path on the court. The dotted line is the ball after release. Drag to move the view."
+                frameClass="pre-release"
+                orbit
+                action={
+                  <button
+                    type="button"
+                    className="view-reset"
+                    onClick={() => {
+                      orbitRef.current = sideOrbit(pathRef.current);
+                    }}
+                  >
+                    Reset
+                  </button>
+                }
+                onPointerDown={(event) => {
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  orbitDrag.current = {
+                    x: event.clientX,
+                    y: event.clientY,
+                    yaw: orbitRef.current.yaw,
+                    pitch: orbitRef.current.pitch,
+                  };
+                }}
+                onPointerMove={(event) => {
+                  const drag = orbitDrag.current;
+                  if (!drag) return;
+                  orbitRef.current = {
+                    yaw: drag.yaw - (event.clientX - drag.x) * 0.008,
+                    pitch: Math.min(1.35, Math.max(0.02, drag.pitch + (event.clientY - drag.y) * 0.006)),
+                  };
+                }}
+                onPointerUp={() => {
+                  orbitDrag.current = null;
+                }}
+              />
+            )}
             {view === "average" ? (
               <GraphFrame
                 caption="Launch angle"
                 hint="Solid line is this player. Dashed line is the league."
                 canvasRef={launchRef}
                 canvasLabel="Launch angle versus the league"
+                frameClass="launch-angle"
               />
             ) : null}
             {view === "individual" ? (
@@ -656,7 +709,7 @@ function PlayerPane({
                 onClick={pickCourt}
                 onPointerMove={(event) => {
                   if (!zoomOn) return;
-                  setCourtZoom(zoomForCanvas(event, false));
+                  setCourtZoom(zoomForCanvas(event));
                 }}
                 onPointerLeave={() => setCourtZoom(FIT_ZOOM)}
               />
@@ -671,7 +724,7 @@ function PlayerPane({
             frameClass="full-shot"
             onPointerMove={(event) => {
               if (!zoomOn) return;
-              setFullZoom(zoomForCanvas(event, false));
+              setFullZoom(zoomForCanvas(event));
             }}
             onPointerLeave={() => setFullZoom(FIT_ZOOM)}
           />
@@ -799,7 +852,7 @@ function BreakdownTable({ shots, filters }: { shots: Shot[]; filters: Filters })
             </tr>
           ))}
         </tbody>
-        <caption>Range and result filters apply to every row.</caption>
+        <caption>Threes or mid-range, and the result filter, apply to every row.</caption>
       </table>
     </div>
   );
@@ -958,7 +1011,7 @@ const DOC_SECTIONS: { title: string; note?: string; items: { term: string; text:
     items: [
       {
         term: "Pre-release",
-        text: "On Average, the release shape, stopped when the ball leaves the hand. On Individual, the floor path and that same release shape.",
+        text: "On Average, the release shape, stopped when the ball leaves the hand. On Individual, a 3D view of that path on the court. The dotted line is the ball after release. Drag to move the camera, and Reset returns to a side view of the shot. Lighter blue is a slower part of the move.",
       },
       {
         term: "Launch angle",
@@ -988,6 +1041,10 @@ const DOC_SECTIONS: { title: string; note?: string; items: { term: string; text:
       {
         term: "Zoom",
         text: "Turn it on in this menu. The chart under the pointer magnifies. Average and Individual each keep their own switch.",
+      },
+      {
+        term: "Threes Only",
+        text: "On by default, under Zoom. Turn it off to see mid-range jumpers instead. The two ranges are never shown together.",
       },
       { term: "Compare", text: "A second player, using the same filters and the same page." },
     ],
@@ -1051,13 +1108,17 @@ function DocsOverlay({ onClose }: { onClose: () => void }) {
 
 function SettingsMenu({
   zoomOn,
+  threes,
   docsOpen,
   onZoom,
+  onThrees,
   onDocs,
 }: {
   zoomOn: boolean;
+  threes: boolean;
   docsOpen: boolean;
   onZoom: () => void;
+  onThrees: () => void;
   onDocs: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -1097,6 +1158,10 @@ function SettingsMenu({
             <span>Zoom</span>
             <span className={zoomOn ? "switch on" : "switch"} aria-hidden="true" />
           </button>
+          <button type="button" className="settings-item" role="menuitemcheckbox" aria-checked={threes} onClick={onThrees}>
+            <span>Threes Only</span>
+            <span className={threes ? "switch on" : "switch"} aria-hidden="true" />
+          </button>
           <div className="settings-rule" role="separator" />
           <button
             type="button"
@@ -1126,21 +1191,9 @@ function zoomAt(x: number, y: number, width: number, height: number): GraphZoom 
   };
 }
 
-function zoomForCanvas(event: ReactPointerEvent<HTMLCanvasElement>, splitPre: boolean): GraphZoom {
+function zoomForCanvas(event: ReactPointerEvent<HTMLCanvasElement>): GraphZoom {
   const rect = event.currentTarget.getBoundingClientRect();
-  let x = event.clientX - rect.left;
-  let y = event.clientY - rect.top;
-  let width = rect.width;
-  let height = rect.height;
-  if (splitPre) {
-    const layout = preLayout(rect.width, rect.height);
-    const region = layout.stacked ? (y >= layout.form.y ? layout.form : layout.floor) : x >= layout.form.x ? layout.form : layout.floor;
-    x -= region.x;
-    y -= region.y;
-    width = region.w;
-    height = region.h;
-  }
-  return zoomAt(x, y, width, height);
+  return zoomAt(event.clientX - rect.left, event.clientY - rect.top, rect.width, rect.height);
 }
 
 function Choice<T extends string>({
@@ -1206,70 +1259,6 @@ function formatClock(time: number): string {
   return `${sign}${Math.abs(time).toFixed(2)}s`;
 }
 
-function courtPoints(shot: Shot, untilRelease = false): FloorPoint[] {
-  const points = clipFlight(shot).map((point) => ({ t: point[0], x: point[4], y: point[5] }));
-  if (!untilRelease) return points;
-  const kept: FloorPoint[] = [];
-  for (const point of points) {
-    kept.push(point);
-    if (point.t >= 0) break;
-  }
-  return kept;
-}
-
-function floorBall(path: number[][], sample: number[] | null, untilRelease: boolean): { x: number; y: number } | null {
-  if (untilRelease && (!sample || sample[0] > 0)) {
-    let release = path[0];
-    if (!release) return null;
-    let gap = Math.abs(release[0]);
-    for (const point of path) {
-      const next = Math.abs(point[0]);
-      if (next < gap) {
-        release = point;
-        gap = next;
-      }
-    }
-    return { x: release[4], y: release[5] };
-  }
-  return sample ? { x: sample[4], y: sample[5] } : null;
-}
-
-function footPoints(shot: Shot): FloorPoint[] {
-  return shot.foot.map((point) => ({ t: point[0], x: point[1], y: point[2] }));
-}
-
-function sampleFoot(foot: number[][], time: number): { x: number; y: number } | null {
-  if (!foot.length) return null;
-  if (foot.length === 1 || time <= foot[0][0]) return { x: foot[0][1], y: foot[0][2] };
-  const last = foot[foot.length - 1];
-  if (time >= last[0]) return { x: last[1], y: last[2] };
-  for (let index = 1; index < foot.length; index += 1) {
-    if (foot[index][0] >= time) {
-      const span = foot[index][0] - foot[index - 1][0] || 1e-6;
-      const mix = (time - foot[index - 1][0]) / span;
-      return {
-        x: foot[index - 1][1] + (foot[index][1] - foot[index - 1][1]) * mix,
-        y: foot[index - 1][2] + (foot[index][2] - foot[index - 1][2]) * mix,
-      };
-    }
-  }
-  return { x: last[1], y: last[2] };
-}
-
-function timeTicks(path: number[][], until?: number): { f: number; z: number }[] {
-  if (path.length < 2) return [];
-  const start = path[0][0];
-  const end = until == null ? path[path.length - 1][0] : Math.min(path[path.length - 1][0], until);
-  if (end < start) return [];
-  const marks: { f: number; z: number }[] = [];
-  for (let time = start; time <= end + 1e-4; time += 0.04) {
-    const sample = samplePath(path, Math.min(Math.round(time * 1000) / 1000, end));
-    if (!sample) continue;
-    marks.push({ f: sample[1], z: sample[3] });
-  }
-  return marks;
-}
-
 function throughRelease(path: number[][]): { f: number; z: number }[] {
   const points: { f: number; z: number }[] = [];
   for (const point of path) {
@@ -1288,6 +1277,63 @@ function clipToRelease(points: CurvePoint[]): CurvePoint[] {
   return kept;
 }
 
+function toPrePoint(point: number[]): PrePoint {
+  return { t: point[0], f: point[1], l: point[2], z: point[3], cx: point[4], cy: point[5] };
+}
+
+function releasePoints(path: number[][]): PrePoint[] {
+  const points: PrePoint[] = [];
+  for (const point of path) {
+    points.push(toPrePoint(point));
+    if (point[0] >= 0) break;
+  }
+  return points;
+}
+
+function flightPoints(path: number[][]): PrePoint[] {
+  const release = releasePoints(path).at(-1);
+  if (!release || release.t < 0) return [];
+  const after = path.filter((point) => point[0] > release.t).map(toPrePoint);
+  return after.length ? [release, ...after] : [];
+}
+
+function ballOnTrail(points: PrePoint[], time: number): PrePoint | null {
+  if (points.length < 2) return points[0] ?? null;
+  const end = points[points.length - 1];
+  const start = points[0];
+  const t = Math.min(end.t, Math.max(start.t, time));
+  for (let index = 1; index < points.length; index += 1) {
+    const previous = points[index - 1];
+    const point = points[index];
+    if (point.t < t) continue;
+    const span = point.t - previous.t || 1e-6;
+    const mix = (t - previous.t) / span;
+    return {
+      t,
+      f: previous.f + (point.f - previous.f) * mix,
+      l: previous.l + (point.l - previous.l) * mix,
+      z: previous.z + (point.z - previous.z) * mix,
+      cx: previous.cx + (point.cx - previous.cx) * mix,
+      cy: previous.cy + (point.cy - previous.cy) * mix,
+    };
+  }
+  return end;
+}
+
+function timeTicks(path: number[][], until?: number): { f: number; z: number }[] {
+  if (path.length < 2) return [];
+  const start = path[0][0];
+  const end = until == null ? path[path.length - 1][0] : Math.min(path[path.length - 1][0], until);
+  if (end < start) return [];
+  const marks: { f: number; z: number }[] = [];
+  for (let time = start; time <= end + 1e-4; time += 0.04) {
+    const sample = samplePath(path, Math.min(Math.round(time * 1000) / 1000, end));
+    if (!sample) continue;
+    marks.push({ f: sample[1], z: sample[3] });
+  }
+  return marks;
+}
+
 function GraphFrame({
   caption,
   hint,
@@ -1295,33 +1341,48 @@ function GraphFrame({
   canvasRef,
   canvasLabel,
   frameClass,
+  orbit,
+  action,
   onClick,
+  onPointerDown,
   onPointerMove,
+  onPointerUp,
   onPointerLeave,
 }: {
   caption: string;
   hint?: string;
   hoverZoom?: boolean;
+  orbit?: boolean;
+  action?: React.ReactNode;
   canvasRef: RefObject<HTMLCanvasElement | null>;
   canvasLabel: string;
   frameClass?: string;
   onClick?: (event: React.MouseEvent<HTMLCanvasElement>) => void;
+  onPointerDown?: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
   onPointerMove?: (event: ReactPointerEvent<HTMLCanvasElement>) => void;
+  onPointerUp?: () => void;
   onPointerLeave?: () => void;
 }) {
+  const graphClass = ["graph", hoverZoom ? "can-zoom" : "", orbit ? "can-orbit" : ""].filter(Boolean).join(" ");
   return (
     <figure className={frameClass ? `graph-frame ${frameClass}` : "graph-frame"}>
       <figcaption>
-        {caption}
+        <span className="graph-title">
+          <span>{caption}</span>
+          {action}
+        </span>
         {hint ? <span className="graph-hint">{hint}</span> : null}
       </figcaption>
-      <div className={hoverZoom ? "graph can-zoom" : "graph"}>
+      <div className={graphClass}>
         <canvas
           ref={canvasRef}
           aria-label={canvasLabel}
           onClick={onClick}
+          onPointerDown={onPointerDown}
           onPointerEnter={onPointerMove}
           onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           onPointerLeave={onPointerLeave}
         />
       </div>

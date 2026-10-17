@@ -807,6 +807,335 @@ export function drawLaunch(
   ctx.restore();
 }
 
+export type OrbitView = { yaw: number; pitch: number };
+
+const SIDE_PITCH = 0.16;
+
+/** Fallback when a shot has no direction: camera outside a sideline. */
+export const SIDE_ORBIT: OrbitView = { yaw: Math.PI / 2, pitch: SIDE_PITCH };
+
+/** Side-on to this shot: the camera looks across the path toward the basket. */
+export function sideOrbit(path: number[][]): OrbitView {
+  const release = [...path].reverse().find((point) => point[0] <= 0) ?? path[0];
+  if (!release) return { ...SIDE_ORBIT };
+  const towardHoopX = HOOP_X - release[4];
+  const towardHoopZ = HOOP_Y - release[5];
+  if (Math.hypot(towardHoopX, towardHoopZ) < 1) return { ...SIDE_ORBIT };
+  return { yaw: Math.atan2(-towardHoopZ, towardHoopX), pitch: SIDE_PITCH };
+}
+
+export type PrePoint = { t: number; f: number; l: number; z: number; cx: number; cy: number };
+
+export type PreTrail = {
+  points: PrePoint[];
+  color: string;
+  width: number;
+  dash: number[];
+  tempo?: boolean;
+};
+
+type Vec3 = { x: number; y: number; z: number };
+
+function vec(x: number, y: number, z: number): Vec3 {
+  return { x, y, z };
+}
+
+function add(a: Vec3, b: Vec3): Vec3 {
+  return vec(a.x + b.x, a.y + b.y, a.z + b.z);
+}
+
+function sub(a: Vec3, b: Vec3): Vec3 {
+  return vec(a.x - b.x, a.y - b.y, a.z - b.z);
+}
+
+function scale(a: Vec3, k: number): Vec3 {
+  return vec(a.x * k, a.y * k, a.z * k);
+}
+
+function dot(a: Vec3, b: Vec3): number {
+  return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return vec(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+}
+
+function normalize(a: Vec3): Vec3 {
+  const length = Math.hypot(a.x, a.y, a.z) || 1;
+  return scale(a, 1 / length);
+}
+
+/** Court width, then length from the offensive baseline, then height. */
+function courtPoint(across: number, along: number, height: number): Vec3 {
+  return vec(across, height, along);
+}
+
+const COURT_LENGTH = 94;
+const RIM_HEIGHT = 10;
+const RIM_RADIUS = 0.75;
+const NEAR_RIM = 5.25;
+const FAR_RIM = COURT_LENGTH - NEAR_RIM;
+
+/** World bounds around the ball and the offensive basket, so the shot fills the view. */
+function shotFrame(trails: PreTrail[], balls: { cx: number; cy: number; z: number }[]): { target: Vec3; span: number; corners: Vec3[] } | null {
+  const samples: Vec3[] = [];
+  for (const trail of trails) {
+    for (const point of trail.points) samples.push(courtPoint(point.cx, point.cy, point.z));
+  }
+  for (const ball of balls) samples.push(courtPoint(ball.cx, ball.cy, ball.z));
+  if (!samples.length) return null;
+
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  let z0 = Infinity;
+  let z1 = -Infinity;
+  const take = (point: Vec3) => {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) return;
+    x0 = Math.min(x0, point.x);
+    x1 = Math.max(x1, point.x);
+    y0 = Math.min(y0, point.y);
+    y1 = Math.max(y1, point.y);
+    z0 = Math.min(z0, point.z);
+    z1 = Math.max(z1, point.z);
+  };
+  samples.forEach(take);
+  if (!Number.isFinite(x0)) return null;
+  take(courtPoint(22, NEAR_RIM - 1.25, 9));
+  take(courtPoint(28, NEAR_RIM - 1.25, 13));
+  take(courtPoint(25, NEAR_RIM, RIM_HEIGHT));
+
+  const pad = 2;
+  x0 -= pad;
+  x1 += pad;
+  y0 -= pad;
+  y1 += pad;
+  z0 -= pad;
+  z1 += pad;
+
+  const minWide = 14;
+  const minLong = 20;
+  const midX = (x0 + x1) / 2;
+  const midZ = (z0 + z1) / 2;
+  if (x1 - x0 < minWide) {
+    x0 = midX - minWide / 2;
+    x1 = midX + minWide / 2;
+  }
+  if (z1 - z0 < minLong) {
+    z0 = midZ - minLong / 2;
+    z1 = midZ + minLong / 2;
+  }
+
+  const corners: Vec3[] = [];
+  for (const x of [x0, x1]) {
+    for (const y of [y0, y1]) {
+      for (const z of [z0, z1]) corners.push(vec(x, y, z));
+    }
+  }
+  const size = Math.max(x1 - x0, y1 - y0, z1 - z0);
+  return {
+    target: vec((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2),
+    span: Math.max(32, size * 1.15),
+    corners,
+  };
+}
+
+/** Orbiting view of the ball on the court. A dotted trail is the flight after release. */
+export function drawPreRelease3D(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  trails: PreTrail[],
+  balls: { cx: number; cy: number; z: number; color: string }[],
+  orbit: OrbitView,
+) {
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.font = `12px ${FONT}`;
+
+  const hasPath = trails.some((trail) => trail.points.length > 0);
+  const framed = shotFrame(trails, balls);
+  const target = framed?.target ?? vec(COURT_W / 2, 8, COURT_LENGTH / 2);
+  const span = framed?.span ?? 80;
+  const pitch = Math.min(1.35, Math.max(0.02, orbit.pitch));
+  const eye = add(
+    target,
+    vec(
+      span * Math.cos(pitch) * Math.sin(orbit.yaw),
+      span * Math.sin(pitch),
+      span * Math.cos(pitch) * Math.cos(orbit.yaw),
+    ),
+  );
+  const forward = normalize(sub(target, eye));
+  const right = normalize(cross(forward, vec(0, 1, 0)));
+  const up = cross(right, forward);
+
+  const toCamera = (point: Vec3) => {
+    const delta = sub(point, eye);
+    return { x: dot(delta, right), y: dot(delta, up), z: Math.max(0.35, dot(delta, forward)) };
+  };
+
+  const fitted: Vec3[] = framed?.corners ?? [
+    courtPoint(0, 0, 0),
+    courtPoint(COURT_W, 0, 0),
+    courtPoint(0, COURT_LENGTH, 0),
+    courtPoint(COURT_W, COURT_LENGTH, 0),
+    courtPoint(22, NEAR_RIM - 1.2, 13),
+    courtPoint(28, FAR_RIM + 1.2, 13),
+  ];
+  let reach = 0.001;
+  for (const point of fitted) {
+    const camera = toCamera(point);
+    reach = Math.max(reach, Math.abs(camera.x) / camera.z, Math.abs(camera.y) / camera.z);
+  }
+  const focal = (Math.min(width, height) * (framed ? 0.54 : 0.46)) / reach;
+  const project = (point: Vec3) => {
+    const camera = toCamera(point);
+    const scale = focal / camera.z;
+    return { x: width / 2 + camera.x * scale, y: height / 2 - camera.y * scale, depth: camera.z, scale };
+  };
+
+  type Stroke = { depth: number; draw: () => void };
+  const strokes: Stroke[] = [];
+  const pushLine = (a: Vec3, b: Vec3, color: string, lineWidth: number, dash: number[] = []) => {
+    const pa = project(a);
+    const pb = project(b);
+    strokes.push({
+      depth: (pa.depth + pb.depth) / 2,
+      draw: () => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        ctx.setLineDash(dash);
+        ctx.beginPath();
+        ctx.moveTo(pa.x, pa.y);
+        ctx.lineTo(pb.x, pb.y);
+        ctx.stroke();
+      },
+    });
+  };
+  const pushLoop = (points: Vec3[], color: string, lineWidth: number, fill?: string) => {
+    if (points.length < 2) return;
+    const projected = points.map(project);
+    const depth = projected.reduce((sum, point) => sum + point.depth, 0) / projected.length;
+    strokes.push({
+      depth,
+      draw: () => {
+        ctx.beginPath();
+        projected.forEach((point, index) => (index === 0 ? ctx.moveTo(point.x, point.y) : ctx.lineTo(point.x, point.y)));
+        ctx.closePath();
+        if (fill) {
+          ctx.fillStyle = fill;
+          ctx.fill();
+        }
+        ctx.strokeStyle = color;
+        ctx.lineWidth = lineWidth;
+        ctx.setLineDash([]);
+        ctx.stroke();
+      },
+    });
+  };
+
+  const boundary = [
+    courtPoint(0, 0, 0),
+    courtPoint(COURT_W, 0, 0),
+    courtPoint(COURT_W, COURT_LENGTH, 0),
+    courtPoint(0, COURT_LENGTH, 0),
+  ];
+  pushLoop(boundary, COURT_LINE, 1.6, "rgba(231, 238, 246, 0.55)");
+  pushLine(courtPoint(0, COURT_LENGTH / 2, 0), courtPoint(COURT_W, COURT_LENGTH / 2, 0), GRID_MID, 1.25);
+
+  const rimRing = (across: number, along: number) => {
+    const points: Vec3[] = [];
+    for (let step = 0; step <= 24; step += 1) {
+      const angle = (step / 24) * Math.PI * 2;
+      points.push(courtPoint(across + Math.cos(angle) * RIM_RADIUS, along + Math.sin(angle) * RIM_RADIUS, RIM_HEIGHT));
+    }
+    return points;
+  };
+  const drawBasket = (rimAlong: number, boardAlong: number) => {
+    const board = [
+      courtPoint(22, boardAlong, 9),
+      courtPoint(28, boardAlong, 9),
+      courtPoint(28, boardAlong, 13),
+      courtPoint(22, boardAlong, 13),
+    ];
+    pushLoop(board, COURT_LINE, 1.4, "rgba(12, 35, 64, 0.08)");
+    pushLine(courtPoint(25, boardAlong, 0), courtPoint(25, boardAlong, 9), COURT_LINE, 1.6);
+    pushLine(courtPoint(25, boardAlong, RIM_HEIGHT), courtPoint(25, rimAlong, RIM_HEIGHT), COURT_LINE, 1.4);
+    const ring = rimRing(25, rimAlong);
+    for (let index = 1; index < ring.length; index += 1) pushLine(ring[index - 1], ring[index], INK, 1.6);
+  };
+  drawBasket(NEAR_RIM, NEAR_RIM - 1.25);
+  drawBasket(FAR_RIM, FAR_RIM + 1.25);
+
+  const place = (point: PrePoint) => courtPoint(point.cx, point.cy, point.z);
+  for (const trail of trails) {
+    if (trail.dash.length && trail.points.length > 1) {
+      const projected = trail.points.map((point) => project(place(point)));
+      let traveled = 0;
+      for (let index = 1; index < projected.length; index += 1) {
+        const previous = projected[index - 1];
+        const point = projected[index];
+        const offset = traveled;
+        traveled += Math.hypot(point.x - previous.x, point.y - previous.y);
+        strokes.push({
+          depth: (previous.depth + point.depth) / 2,
+          draw: () => {
+            ctx.strokeStyle = trail.color;
+            ctx.lineWidth = trail.width;
+            ctx.setLineDash(trail.dash);
+            ctx.lineDashOffset = -offset;
+            ctx.beginPath();
+            ctx.moveTo(previous.x, previous.y);
+            ctx.lineTo(point.x, point.y);
+            ctx.stroke();
+          },
+        });
+      }
+      continue;
+    }
+    for (let index = 1; index < trail.points.length; index += 1) {
+      const previous = trail.points[index - 1];
+      const point = trail.points[index];
+      const dt = point.t - previous.t;
+      let color = trail.color;
+      if (trail.tempo && dt > 0) {
+        const speed = Math.hypot(point.f - previous.f, point.l - previous.l, point.z - previous.z) / dt;
+        color = speedColor(speed);
+      }
+      pushLine(place(previous), place(point), color, trail.width);
+    }
+  }
+
+  strokes.sort((a, b) => b.depth - a.depth);
+  for (const stroke of strokes) stroke.draw();
+  ctx.setLineDash([]);
+  ctx.lineDashOffset = 0;
+
+  const markers = balls.map((ball) => ({ ball, screen: project(courtPoint(ball.cx, ball.cy, ball.z)) }));
+  markers.sort((a, b) => b.screen.depth - a.screen.depth);
+  for (const marker of markers) {
+    const radius = Math.max(3.5, Math.min(8, 0.45 * marker.screen.scale));
+    ctx.beginPath();
+    ctx.fillStyle = "#fff";
+    ctx.arc(marker.screen.x, marker.screen.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = marker.ball.color;
+    ctx.stroke();
+  }
+
+  if (!hasPath) {
+    ctx.fillStyle = INK_SOFT;
+    ctx.textAlign = "left";
+    ctx.fillText("No path for these filters.", 12, 22);
+  }
+  ctx.restore();
+}
+
 export function fitCanvas(canvas: HTMLCanvasElement): { ctx: CanvasRenderingContext2D; width: number; height: number } | null {
   const rect = canvas.getBoundingClientRect();
   const dpr = window.devicePixelRatio || 1;

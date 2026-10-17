@@ -15,10 +15,15 @@ function coherent(shot: Shot): boolean {
   if (path.length < 4) return false;
   let maxStep = 0;
   for (let index = 1; index < path.length; index += 1) {
-    const step = Math.hypot(path[index][1] - path[index - 1][1], path[index][3] - path[index - 1][3]);
+    const step = Math.hypot(
+      path[index][1] - path[index - 1][1],
+      path[index][2] - path[index - 1][2],
+      path[index][3] - path[index - 1][3],
+    );
     maxStep = Math.max(maxStep, step);
   }
-  if (maxStep > 12) return false;
+  // One sample jumping several feet is a broken track, not a shot.
+  if (maxStep > 8) return false;
   const flight = path.filter((point) => point[0] >= 0);
   if (flight.length < 3) return false;
   let maxForward = -Infinity;
@@ -137,8 +142,44 @@ function flightWindow(shot: Shot): { path: number[][]; start: number; end: numbe
   return { path, start, end };
 }
 
-// One real attempt: the shot whose flight stays closest to the pointwise median.
-// The gather is not part of the match. The returned shot is the stored attempt.
+type GatherShape = { dur: number; maxLat: number; pathLen: number; maxStep: number };
+
+function gatherShape(shot: Shot): GatherShape | null {
+  const pre: number[][] = [];
+  for (const point of shot.path) {
+    if (point[0] > 0) break;
+    pre.push(point);
+  }
+  if (pre.length < 2) return null;
+  let maxLat = 0;
+  let pathLen = 0;
+  let maxStep = 0;
+  for (let index = 0; index < pre.length; index += 1) {
+    maxLat = Math.max(maxLat, Math.abs(pre[index][2]));
+    if (index === 0) continue;
+    const step = Math.hypot(
+      pre[index][1] - pre[index - 1][1],
+      pre[index][2] - pre[index - 1][2],
+      pre[index][3] - pre[index - 1][3],
+    );
+    pathLen += step;
+    maxStep = Math.max(maxStep, step);
+  }
+  return { dur: -pre[0][0], maxLat, pathLen, maxStep };
+}
+
+function spread(values: number[]): { mid: number; scale: number } {
+  const mid = quantile(values, 0.5);
+  return { mid, scale: Math.max(0.35, quantile(values, 0.75) - mid) };
+}
+
+function excess(value: number, band: { mid: number; scale: number }): number {
+  return Math.max(0, value - band.mid) / band.scale;
+}
+
+// One real attempt. The flight has to stay near the pointwise median arc.
+// Among those, the move before release has to look like this player's usual gather,
+// so a sideways pass or a broken track is not drawn as the typical shot.
 export function medianShot(shots: Shot[]): Shot | null {
   if (!shots.length) return null;
   if (shots.length === 1) return shots[0];
@@ -166,10 +207,7 @@ export function medianShot(shots: Shot[]): Shot | null {
     if (forward.length < need) return null;
     return { f: quantile(forward, 0.5), l: quantile(lateral, 0.5), z: quantile(height, 0.5) };
   });
-  let best: Shot | null = null;
-  let bestScore = Infinity;
-  let partial: Shot | null = null;
-  let partialScore = Infinity;
+  const ranked: { shot: Shot; score: number; covered: boolean }[] = [];
   for (let shotIndex = 0; shotIndex < shots.length; shotIndex += 1) {
     const window = windows[shotIndex];
     if (!window) continue;
@@ -186,18 +224,32 @@ export function medianShot(shots: Shot[]): Shot | null {
       count += 1;
     }
     if (!count) continue;
-    const score = error / count;
-    if (score < partialScore) {
-      partialScore = score;
-      partial = shots[shotIndex];
-    }
-    if (count < times.length * 0.6) continue;
-    if (score < bestScore) {
-      bestScore = score;
-      best = shots[shotIndex];
+    ranked.push({ shot: shots[shotIndex], score: error / count, covered: count >= times.length * 0.6 });
+  }
+  if (!ranked.length) return shots[0];
+  const covered = ranked.filter((item) => item.covered);
+  const pool = covered.length ? covered : ranked;
+  const bestRmse = Math.sqrt(Math.min(...pool.map((item) => item.score)));
+  const close = pool.filter((item) => Math.sqrt(item.score) <= bestRmse + 0.85);
+  const gathers = close.map((item) => gatherShape(item.shot)).filter((shape): shape is GatherShape => shape != null);
+  if (gathers.length < 2) return close.reduce((best, item) => (item.score < best.score ? item : best)).shot;
+  const dur = spread(gathers.map((shape) => shape.dur));
+  const lat = spread(gathers.map((shape) => shape.maxLat));
+  const len = spread(gathers.map((shape) => shape.pathLen));
+  const step = spread(gathers.map((shape) => shape.maxStep));
+  let best = close[0];
+  let bestCost = Infinity;
+  for (const item of close) {
+    const shape = gatherShape(item.shot);
+    const cost = shape
+      ? excess(shape.dur, dur) + excess(shape.maxLat, lat) * 1.4 + excess(shape.pathLen, len) + excess(shape.maxStep, step) * 1.2
+      : 4;
+    if (cost < bestCost - 1e-6 || (Math.abs(cost - bestCost) <= 1e-6 && item.score < best.score)) {
+      bestCost = cost;
+      best = item;
     }
   }
-  return best ?? partial ?? shots[0];
+  return best.shot;
 }
 
 export type Summary = {
