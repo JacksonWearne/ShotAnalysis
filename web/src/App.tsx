@@ -99,6 +99,7 @@ export function App() {
   const [docsOpen, setDocsOpen] = useState(false);
   const [zoomPages, setZoomPages] = useState<Record<View, boolean>>({ average: false, individual: false });
   const [showTypes, setShowTypes] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [league, setLeague] = useState<LeagueCell[] | null>(null);
   const primary = usePlayer(playerId);
   const compared = usePlayer(compareId);
@@ -157,10 +158,21 @@ export function App() {
         </div>
       </header>
       {docsOpen ? <DocsOverlay onClose={() => setDocsOpen(false)} /> : null}
-      <div className={compareId != null ? "workspace compare" : "workspace"}>
-        <aside className="panel sidebar">
+      <div className={["workspace", compareId != null ? "compare" : "", sidebarOpen ? "" : "sidebar-collapsed"].filter(Boolean).join(" ")}>
+        <aside className={sidebarOpen ? "panel sidebar" : "panel sidebar collapsed"}>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            aria-expanded={sidebarOpen}
+            aria-label={sidebarOpen ? "Hide players and filters" : "Show players and filters"}
+            onClick={() => setSidebarOpen((open) => !open)}
+          >
+            <span>Players</span>
+            {sidebarOpen ? <span className="shots-action">Hide</span> : null}
+          </button>
+          {sidebarOpen ? (
+            <div className="sidebar-body">
           <div className="sidebar-block">
-            <h2 className="sidebar-heading">Players</h2>
             <div className="player-picks">
               <PlayerSelect
                 label="Player"
@@ -219,29 +231,16 @@ export function App() {
             </div>
           </div>
           <p className="sidebar-foot">Public archive of the 2015–16 games released before the feed was removed.</p>
+            </div>
+          ) : null}
         </aside>
-        {primary.player ? (
-          <PlayerPane
-            key={primary.player.id}
-            player={primary.player}
-            filters={filters}
-            view={view}
-            zoomOn={zoomOn}
-            showTypes={showTypes}
-            onShowTypes={setShowTypes}
-            onOpenIndividual={() => setView("individual")}
-            league={league}
-          />
-        ) : (
-          <section className="panel empty-stage">
-            <p className="empty">{primary.error ? "Could not load this player." : primary.loading ? "Loading shots…" : "Choose a player."}</p>
-          </section>
-        )}
         {compareId != null ? (
-          compared.player ? (
-            <PlayerPane
-              key={compared.player.id}
-              player={compared.player}
+          <div className="compare-scroll">
+            <PlayerColumn
+              player={primary.player}
+              error={primary.error}
+              loading={primary.loading}
+              empty="Choose a player."
               filters={filters}
               view={view}
               zoomOn={zoomOn}
@@ -250,14 +249,84 @@ export function App() {
               onOpenIndividual={() => setView("individual")}
               league={league}
             />
-          ) : (
-            <section className="panel empty-stage">
-              <p className="empty">{compared.error ? "Could not load this player." : "Loading shots…"}</p>
-            </section>
-          )
-        ) : null}
+            <PlayerColumn
+              player={compared.player}
+              error={compared.error}
+              loading={compared.loading}
+              empty="Loading shots…"
+              filters={filters}
+              view={view}
+              zoomOn={zoomOn}
+              showTypes={showTypes}
+              onShowTypes={setShowTypes}
+              onOpenIndividual={() => setView("individual")}
+              league={league}
+            />
+          </div>
+        ) : (
+          <PlayerColumn
+            player={primary.player}
+            error={primary.error}
+            loading={primary.loading}
+            empty="Choose a player."
+            filters={filters}
+            view={view}
+            zoomOn={zoomOn}
+            showTypes={showTypes}
+            onShowTypes={setShowTypes}
+            onOpenIndividual={() => setView("individual")}
+            league={league}
+          />
+        )}
       </div>
     </div>
+  );
+}
+
+function PlayerColumn({
+  player,
+  error,
+  loading,
+  empty,
+  filters,
+  view,
+  zoomOn,
+  showTypes,
+  onShowTypes,
+  onOpenIndividual,
+  league,
+}: {
+  player: PlayerFile | null;
+  error: boolean;
+  loading: boolean;
+  empty: string;
+  filters: Filters;
+  view: View;
+  zoomOn: boolean;
+  showTypes: boolean;
+  onShowTypes: (value: boolean) => void;
+  onOpenIndividual: () => void;
+  league: LeagueCell[] | null;
+}) {
+  if (!player) {
+    return (
+      <section className="panel empty-stage">
+        <p className="empty">{error ? "Could not load this player." : loading ? "Loading shots…" : empty}</p>
+      </section>
+    );
+  }
+  return (
+    <PlayerPane
+      key={player.id}
+      player={player}
+      filters={filters}
+      view={view}
+      zoomOn={zoomOn}
+      showTypes={showTypes}
+      onShowTypes={onShowTypes}
+      onOpenIndividual={onOpenIndividual}
+      league={league}
+    />
   );
 }
 
@@ -668,6 +737,7 @@ function PlayerPane({
               <GraphFrame
                 caption="Pre-release"
                 hint="The line is the median path into the shot. The shade is the middle half of these paths, so a thinner shade is a more consistent gather."
+                info
                 hoverZoom={zoomOn}
                 canvasRef={preRef}
                 canvasLabel="Pre-release form"
@@ -723,6 +793,7 @@ function PlayerPane({
               <GraphFrame
                 caption="Launch angle"
                 hint="Solid line is this player. Dashed line is the league."
+                info
                 canvasRef={launchRef}
                 canvasLabel="Launch angle versus the league"
                 frameClass="launch-angle"
@@ -732,6 +803,7 @@ function PlayerPane({
               <GraphFrame
                 caption="Consistency"
                 hint="The number above the mark is the typical shot. Under the bar, the darker pair is half of the shots and the lighter pair is the outer edges."
+                info
                 canvasRef={spreadRef}
                 canvasLabel="Variation in release, launch, apex, touch, and defender"
                 frameClass="consistency"
@@ -1393,9 +1465,23 @@ function timeTicks(path: number[][], until?: number): { f: number; z: number }[]
   return marks;
 }
 
+function InfoTip({ text }: { text: string }) {
+  return (
+    <span className="info-tip">
+      <button type="button" className="info-icon" aria-label={text}>
+        i
+      </button>
+      <span className="info-bubble" role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
+
 function GraphFrame({
   caption,
   hint,
+  info,
   hoverZoom,
   canvasRef,
   canvasLabel,
@@ -1410,6 +1496,7 @@ function GraphFrame({
 }: {
   caption: string;
   hint?: string;
+  info?: boolean;
   hoverZoom?: boolean;
   orbit?: boolean;
   action?: React.ReactNode;
@@ -1427,10 +1514,13 @@ function GraphFrame({
     <figure className={frameClass ? `graph-frame ${frameClass}` : "graph-frame"}>
       <figcaption>
         <span className="graph-title">
-          <span>{caption}</span>
+          <span className="graph-name">
+            {caption}
+            {info && hint ? <InfoTip text={hint} /> : null}
+          </span>
           {action}
         </span>
-        {hint ? <span className="graph-hint">{hint}</span> : null}
+        {hint && !info ? <span className="graph-hint">{hint}</span> : null}
       </figcaption>
       <div className={graphClass}>
         <canvas
