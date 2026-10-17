@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+web/dist/
+pipeline/data/tmp/
+pipeline/data/sample/
+pipeline/data/sample.7z
+pipeline/data/pbp_2015_16.csv
+pipeline/data/shots.sqlite
+pipeline/data/extract.log
+pipeline/data/shots/
+pipeline/data/failures.txt
