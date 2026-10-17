@@ -1,4 +1,4 @@
-import { clipFlight, type CurvePoint } from "./stats";
+import { clipFlight, type CurvePoint, type GatherSample } from "./stats";
 import { CORNER_X, CORNER_Y, COURT_H, COURT_W, HOOP_X, HOOP_Y, THREE_RADIUS } from "./court";
 import type { Shot } from "./types";
 
@@ -492,6 +492,50 @@ export function flightXScale(width: number, height: number, points: { f: number;
   return Math.min(6, Math.max(0.5, pxF / pxZ));
 }
 
+/** Sleeve around the median gather. Edges are the 25th and 75th percentile box, so the median sits between them. */
+function gatherOutline(points: GatherSample[]): { f: number; z: number }[] {
+  if (points.length < 2) return [];
+  const normals: { f: number; z: number }[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const prev = points[Math.max(0, index - 1)];
+    const next = points[Math.min(points.length - 1, index + 1)];
+    let df = next.f - prev.f;
+    let dz = next.z - prev.z;
+    const length = Math.hypot(df, dz);
+    if (length < 1e-6) {
+      normals.push(normals[index - 1] ?? { f: 0, z: 1 });
+      continue;
+    }
+    df /= length;
+    dz /= length;
+    let normal = { f: -dz, z: df };
+    const previous = normals[index - 1];
+    if (previous && normal.f * previous.f + normal.z * previous.z < 0) normal = { f: -normal.f, z: -normal.z };
+    normals.push(normal);
+  }
+  const upper: { f: number; z: number }[] = [];
+  const lower: { f: number; z: number }[] = [];
+  for (let index = 0; index < points.length; index += 1) {
+    const point = points[index];
+    const normal = normals[index];
+    let low = 0;
+    let high = 0;
+    for (const corner of [
+      [point.fLo, point.zLo],
+      [point.fLo, point.zHi],
+      [point.fHi, point.zLo],
+      [point.fHi, point.zHi],
+    ]) {
+      const offset = (corner[0] - point.f) * normal.f + (corner[1] - point.z) * normal.z;
+      low = Math.min(low, offset);
+      high = Math.max(high, offset);
+    }
+    upper.push({ f: point.f + normal.f * high, z: point.z + normal.z * high });
+    lower.push({ f: point.f + normal.f * low, z: point.z + normal.z * low });
+  }
+  return [...upper, ...lower.reverse()];
+}
+
 export function drawArc(
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -501,7 +545,15 @@ export function drawArc(
   ball: ArcPoint | null,
   rimDist: number | null,
   zoom: GraphZoom,
-  options?: { fit?: boolean; tight?: boolean; ticks?: ArcPoint[]; region?: PlotRegion; compact?: boolean; xScale?: number },
+  options?: {
+    fit?: boolean;
+    tight?: boolean;
+    ticks?: ArcPoint[];
+    region?: PlotRegion;
+    compact?: boolean;
+    xScale?: number;
+    gather?: { points: GatherSample[]; color: string }[];
+  },
 ) {
   const region = options?.region;
   const viewW = region?.w ?? width;
@@ -640,6 +692,24 @@ export function drawArc(
     ctx.beginPath();
     ctx.rect(pad.left, pad.top, plotW, plotH);
     ctx.clip();
+  }
+
+  for (const shade of options?.gather ?? []) {
+    const outline = gatherOutline(shade.points);
+    if (outline.length < 3) continue;
+    ctx.beginPath();
+    outline.forEach((point, index) => {
+      const x = sx(point.f);
+      const y = sy(point.z);
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.save();
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = shade.color;
+    ctx.fill();
+    ctx.restore();
   }
 
   for (const ghost of ghosts) {

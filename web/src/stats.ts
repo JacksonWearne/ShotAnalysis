@@ -129,6 +129,65 @@ export function samplePath(path: number[][], t: number): number[] | null {
   return values as number[];
 }
 
+export type GatherSample = {
+  t: number;
+  f: number;
+  z: number;
+  l: number;
+  fLo: number;
+  fHi: number;
+  zLo: number;
+  zHi: number;
+};
+
+/**
+ * Median gather through release, plus the middle half of the paths around it.
+ * At each moment, f/z are the medians and the Lo/Hi fields are the 25th and 75th percentiles.
+ * The window starts when half of the gathers have begun, so a few long gathers do not pull the path.
+ */
+export function medianGather(shots: Shot[]): GatherSample[] {
+  const paths = shots.map((shot) => clipFlight(shot)).filter((path) => path.length >= 2);
+  if (paths.length < 5) return [];
+  const starts = paths.map((path) => path[0][0]).filter((time) => time <= 0).sort((a, b) => a - b);
+  if (!starts.length) return [];
+  const begin = starts[Math.floor((starts.length - 1) * 0.5)];
+  const need = Math.max(4, Math.ceil(paths.length * 0.5));
+  const samples: GatherSample[] = [];
+  for (let time = begin; time < -0.001; time += 0.04) {
+    const sample = gatherSample(paths, Math.round(time * 1000) / 1000, need);
+    if (sample) samples.push(sample);
+  }
+  const release = gatherSample(paths, 0, need);
+  if (release) samples.push(release);
+  return samples;
+}
+
+function gatherSample(paths: number[][][], time: number, need: number): GatherSample | null {
+  const forward: number[] = [];
+  const lateral: number[] = [];
+  const height: number[] = [];
+  for (const path of paths) {
+    const f = at(path, time, 1);
+    const l = at(path, time, 2);
+    const z = at(path, time, 3);
+    if (f == null || l == null || z == null) continue;
+    forward.push(f);
+    lateral.push(l);
+    height.push(z);
+  }
+  if (forward.length < need) return null;
+  return {
+    t: time,
+    f: quantile(forward, 0.5),
+    z: quantile(height, 0.5),
+    l: quantile(lateral, 0.5),
+    fLo: quantile(forward, 0.25),
+    fHi: quantile(forward, 0.75),
+    zLo: quantile(height, 0.25),
+    zHi: quantile(height, 0.75),
+  };
+}
+
 function flightWindow(shot: Shot): { path: number[][]; start: number; end: number } | null {
   const path = clipFlight(shot);
   let start = Infinity;

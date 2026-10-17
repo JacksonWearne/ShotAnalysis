@@ -6,6 +6,8 @@ import {
   clipFlight,
   displayRange,
   filterShots,
+  medianGather,
+  type GatherSample,
   leagueAngle,
   medianShot,
   samplePath,
@@ -331,6 +333,17 @@ function PlayerPane({
   );
   const stats = useMemo(() => summarize(filtered), [filtered]);
   const leagueMean = useMemo(() => (league ? leagueAngle(league, filters) : null), [league, filters]);
+  const gatherCurves = useMemo(() => {
+    if (byType) {
+      return groupCurves.map((group) => ({
+        color: group.color,
+        dash: group.dash,
+        shot: group.shot as Shot | null,
+        points: medianGather(group.shots),
+      }));
+    }
+    return [{ color: "#0c2340", dash: [] as number[], shot: median, points: medianGather(filtered) }];
+  }, [byType, groupCurves, filtered, median]);
   const representative = (byType ? groupCurves[0]?.shot : median) ?? median;
   const playback = (view === "individual" ? selected ?? median : representative) ?? null;
   const activePath = playback ? clipFlight(playback) : [];
@@ -341,7 +354,6 @@ function PlayerPane({
   if (!playing) playRef.current.time = playTime;
   pathRef.current = activePath;
 
-  const playbackId = playback ? shotId(playback) : "";
   const medianKey = median ? shotId(median) : "";
   const representativeRef = useRef(representative);
   representativeRef.current = representative;
@@ -359,8 +371,9 @@ function PlayerPane({
 
   useEffect(() => {
     if (view !== "individual") return;
+    // Shot changes keep the current angle. Reset is the control that returns to a side view.
     orbitRef.current = sideOrbit(pathRef.current);
-  }, [view, playbackId]);
+  }, [view]);
 
   useEffect(() => {
     const shot = representativeRef.current;
@@ -473,27 +486,35 @@ function PlayerPane({
       const focusPath = playback ? clipFlight(playback) : [];
       const focusSample = focusPath.length ? samplePath(focusPath, playRef.current.time) : null;
       const focusRelease = throughRelease(focusPath).at(-1) ?? null;
-      const preBall = focusSample ? (focusSample[0] <= 0 ? { f: focusSample[1], z: focusSample[3] } : focusRelease) : null;
-      const formSeries = byType
-        ? typeLines.map((group) => ({
-            points: clipToRelease(asCurve(group.shot)),
+      const tracked = focusSample ? (focusSample[0] <= 0 ? { f: focusSample[1], z: focusSample[3] } : focusRelease) : null;
+      const formSeries = gatherCurves.flatMap((group) => {
+        const points =
+          group.points.length >= 2
+            ? group.points.map((point) => ({
+                t: point.t,
+                f: point.f,
+                z: point.z,
+                l: point.l,
+                zLo: point.zLo,
+                zHi: point.zHi,
+              }))
+            : group.shot
+              ? clipToRelease(asCurve(group.shot))
+              : [];
+        if (points.length < 2) return [];
+        return [
+          {
+            points,
             color: group.color,
-            width: 2.6,
+            width: byType ? 2.6 : 3,
             dash: group.dash,
             band: false,
-          }))
-        : playback
-          ? [
-              {
-                points: clipToRelease(asCurve(playback)),
-                color: "#0c2340",
-                width: 3,
-                dash: [] as number[],
-                band: false,
-                tempo: true,
-              },
-            ]
-          : [];
+            tempo: !byType && group.points.length >= 2,
+          },
+        ];
+      });
+      const primary = gatherCurves.find((group) => group.points.length >= 2)?.points ?? [];
+      const preBall = primary.length ? sampleGather(primary, playRef.current.time) : tracked;
       const xScale = full
         ? flightXScale(
             full.width,
@@ -502,10 +523,14 @@ function PlayerPane({
             rimDist,
           )
         : 1;
+      const gather = gatherCurves
+        .filter((group) => group.points.length >= 2)
+        .map((group) => ({ points: group.points, color: group.color }));
       drawArc(pre.ctx, pre.width, pre.height, [], formSeries, preBall, null, preZoom, {
         fit: true,
         tight: true,
         xScale,
+        gather,
       });
     }
     if (full) {
@@ -642,7 +667,7 @@ function PlayerPane({
             {view === "average" ? (
               <GraphFrame
                 caption="Pre-release"
-                hint="Release shape, stopped when the ball leaves the hand."
+                hint="The line is the median path into the shot. The shade is the middle half of these paths, so a thinner shade is a more consistent gather."
                 hoverZoom={zoomOn}
                 canvasRef={preRef}
                 canvasLabel="Pre-release form"
@@ -1022,7 +1047,7 @@ const DOC_SECTIONS: { title: string; note?: string; items: { term: string; text:
     items: [
       {
         term: "Pre-release",
-        text: "On Average, the release shape, stopped when the ball leaves the hand. On Individual, a 3D view of that path on the court. The dotted line is the ball after release. Drag to move the camera, and Reset returns to a side view of the shot. Lighter blue is a slower part of the move.",
+        text: "On Average, the line is the median path into the release. The shade is the middle half of those paths, from the 25th to the 75th percentile, so the line sits inside it. A thinner shade is a more consistent gather. On Individual, a 3D view of that path on the court. The dotted line is the ball after release. Drag to move the camera, and Reset returns to a side view of the shot. Lighter blue is a slower part of the move.",
       },
       {
         term: "Launch angle",
@@ -1281,6 +1306,25 @@ function throughRelease(path: number[][]): { f: number; z: number }[] {
     if (point[0] >= 0) break;
   }
   return points;
+}
+
+function sampleGather(points: GatherSample[], time: number): { f: number; z: number } {
+  const last = points[points.length - 1];
+  if (time >= last.t) return { f: last.f, z: last.z };
+  const first = points[0];
+  if (time <= first.t) return { f: first.f, z: first.z };
+  for (let index = 1; index < points.length; index += 1) {
+    const point = points[index];
+    if (point.t < time) continue;
+    const previous = points[index - 1];
+    const span = point.t - previous.t || 1e-6;
+    const mix = (time - previous.t) / span;
+    return {
+      f: previous.f + (point.f - previous.f) * mix,
+      z: previous.z + (point.z - previous.z) * mix,
+    };
+  }
+  return { f: last.f, z: last.z };
 }
 
 function clipToRelease(points: CurvePoint[]): CurvePoint[] {
