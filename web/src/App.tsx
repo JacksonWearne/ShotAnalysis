@@ -120,10 +120,10 @@ export function App() {
 
   return (
     <div className="app">
-      <header className="top">
-        <div>
-          <h1 className="wordmark">Shot arc</h1>
-          <p className="season">2015–16 SportVU ball tracking. Paths are the ball, not a player’s joints.</p>
+      <header className="topbar">
+        <div className="brand">
+          <h1>Shot Arc</h1>
+          <p>2015–16 SportVU. Paths are the ball, not a player’s joints.</p>
         </div>
         <div className="views" role="tablist" aria-label="Page">
           {(
@@ -132,35 +132,39 @@ export function App() {
               ["individual", "Individual"],
             ] as const
           ).map(([id, label]) => (
-            <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}>
+            <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)}>
               {label}
             </button>
           ))}
         </div>
       </header>
       <div className={compareId != null ? "workspace compare" : "workspace"}>
-        <aside className="panel players">
-          <div className="player-picks">
-            <PlayerSelect
-              label="Player"
-              players={players}
-              selectedId={playerId}
-              onSelect={(id) => {
-                if (id == null) return;
-                setPlayerId(id);
-                setCompareId((current) => (current === id ? null : current));
-              }}
-            />
-            <PlayerSelect
-              label="Compare"
-              players={players.filter((item) => item.id !== playerId)}
-              selectedId={compareId}
-              allowNone
-              onSelect={setCompareId}
-            />
-            {catalogError ? <p className="note">{catalogError}</p> : null}
+        <aside className="panel sidebar">
+          <div className="sidebar-block">
+            <h2 className="sidebar-heading">Players</h2>
+            <div className="player-picks">
+              <PlayerSelect
+                label="Player"
+                players={players}
+                selectedId={playerId}
+                onSelect={(id) => {
+                  if (id == null) return;
+                  setPlayerId(id);
+                  setCompareId((current) => (current === id ? null : current));
+                }}
+              />
+              <PlayerSelect
+                label="Compare"
+                players={players.filter((item) => item.id !== playerId)}
+                selectedId={compareId}
+                allowNone
+                onSelect={setCompareId}
+              />
+              {catalogError ? <p className="note">{catalogError}</p> : null}
+            </div>
           </div>
           <div className="filter-scroll">
+            <h2 className="sidebar-heading">Filters</h2>
             <div className="filters">
               <Choice
                 label="Style"
@@ -204,8 +208,8 @@ export function App() {
                 onChange={(result) => setFilters({ ...filters, result })}
               />
             </div>
-            <p className="note">The public archive is the 2015–16 games released before the feed was removed.</p>
           </div>
+          <p className="sidebar-foot">Public archive of the 2015–16 games released before the feed was removed.</p>
         </aside>
         {primary.player ? (
           <PlayerPane
@@ -377,10 +381,10 @@ function PlayerPane({
         }))
       : [
           ...(view === "individual" && median && playback && shotId(median) !== shotId(playback)
-            ? [{ points: asCurve(median), color: "rgba(243, 239, 228, 0.55)", width: 1.6, dash: [6, 5], band: false }]
+            ? [{ points: asCurve(median), color: "rgba(12, 35, 64, 0.45)", width: 1.6, dash: [6, 5], band: false }]
             : []),
           ...(playback
-            ? [{ points: asCurve(playback), color: "#f3efe4", width: 2.6, dash: [] as number[], band: false, tempo: view === "individual" }]
+            ? [{ points: asCurve(playback), color: "#0c2340", width: 2.6, dash: [] as number[], band: false, tempo: view === "individual" }]
             : []),
         ];
     const rimDist = playback ? playback.dist : stats.distance;
@@ -396,7 +400,7 @@ function PlayerPane({
       pre.ctx.clearRect(0, 0, pre.width, pre.height);
       const layout = view === "individual" ? preLayout(pre.width, pre.height) : null;
       if (layout) {
-        const floorShots = playback ? [{ shot: playback, color: "#f3efe4", dash: [] as number[] }] : [];
+        const floorShots = playback ? [{ shot: playback, color: "#0c2340", dash: [] as number[] }] : [];
         drawFloor(
           pre.ctx,
           floorShots.map((group) => ({
@@ -427,7 +431,7 @@ function PlayerPane({
                 ? [
                     {
                       points: clipToRelease(asCurve(median)),
-                      color: "rgba(243, 239, 228, 0.45)",
+                      color: "rgba(12, 35, 64, 0.4)",
                       width: 1.5,
                       dash: [5, 4],
                       band: false,
@@ -436,7 +440,7 @@ function PlayerPane({
                 : []),
               {
                 points: clipToRelease(asCurve(playback)),
-                color: "#f3efe4",
+                color: "#0c2340",
                 width: 3,
                 dash: [] as number[],
                 band: false,
@@ -454,7 +458,7 @@ function PlayerPane({
       });
       if (layout) {
         pre.ctx.save();
-        pre.ctx.strokeStyle = "rgba(236, 224, 196, 0.16)";
+        pre.ctx.strokeStyle = "rgba(12, 35, 64, 0.16)";
         pre.ctx.beginPath();
         if (layout.stacked) {
           pre.ctx.moveTo(10, layout.form.y - 4);
@@ -526,12 +530,18 @@ function PlayerPane({
   }
 
   return (
-    <section className={`panel stage page-${view}${view === "individual" && !shotsOpen ? " shots-collapsed" : ""}`}>
+    <section className={`stage page-${view}${view === "individual" && !shotsOpen ? " shots-collapsed" : ""}`}>
       <div className="stage-main">
         <div className="stage-head">
-          <h2>
-            {player.name} <span className="team">{player.team}</span>
-          </h2>
+          <div className="identity">
+            <h2>{player.name}</h2>
+            <p className="team">{player.team}</p>
+            <p className="lede">
+              {view === "average"
+                ? "Typical mechanics for the shots that match the filters."
+                : "Review one shot. Pick it from the chart or the list."}
+            </p>
+          </div>
           {view === "average" ? (
             <div className="views" role="group" aria-label="Typical shot">
               <button type="button" aria-pressed={!showTypes} onClick={() => onShowTypes(false)}>
@@ -555,7 +565,7 @@ function PlayerPane({
           </div>
         ) : selected ? (
           <div className="stats">
-            <Stat label="Result" value={selected.m ? "Make" : "Miss"} />
+            <Stat label="Result" value={selected.m ? "Make" : "Miss"} tone={selected.m ? "make" : "miss"} />
             <Stat label="Distance" value={formatNum(selected.dist, 0, " ft")} />
             <Stat label="Release" value={formatNum(selected.relH, 1, " ft")} />
             <Stat label="Launch" value={formatNum(selected.angle, 0, "°")} />
@@ -571,16 +581,17 @@ function PlayerPane({
             {groupCurves.map((group) => (
               <span key={group.label}>
                 <i className="swatch" style={{ background: group.color }} />
-                {group.label} ({group.shots.length})
+                {group.label}
+                <em>{group.shots.length}</em>
               </span>
             ))}
           </div>
         ) : view === "average" && median ? (
-          <p className="note">
-            Median shot · {formatDate(median.d)} · {median.a}
+          <p className="context">
+            Median of the filtered shots · {formatDate(median.d)} · {median.a}
           </p>
         ) : selected ? (
-          <p className="note">
+          <p className="context">
             {formatDate(selected.d)} · Q{selected.p} {selected.c} · {selected.a} · {STYLE_LABEL[selected.s]} · {CONTEST_LABEL[selected.k]} · {RANGE_LABEL[selected.r]}
             {median && shotId(median) !== shotId(selected) ? " · Dashed line is the median shot." : ""}
           </p>
@@ -589,6 +600,11 @@ function PlayerPane({
           <div className="viz-top">
             <GraphFrame
               caption="Pre-release"
+              hint={
+                view === "average"
+                  ? "Release shape, stopped when the ball leaves the hand."
+                  : "Floor path and release shape, stopped at release."
+              }
               zoom={preZoom}
               onToggle={() => setPreZoom((zoom) => ({ on: !zoom.on, panX: 0, panY: 0 }))}
               canvasRef={preRef}
@@ -603,11 +619,17 @@ function PlayerPane({
               }}
             />
             {view === "average" ? (
-              <GraphFrame caption="Launch angle" canvasRef={launchRef} canvasLabel="Launch angle versus the league" />
+              <GraphFrame
+                caption="Launch angle"
+                hint="Solid line is this player. Dashed line is the league."
+                canvasRef={launchRef}
+                canvasLabel="Launch angle versus the league"
+              />
             ) : null}
             {view === "individual" ? (
               <GraphFrame
                 caption="Shot chart"
+                hint="Green is a make, red is a miss. Click a spot to open it."
                 zoom={courtZoom}
                 onToggle={() => setCourtZoom((zoom) => ({ on: !zoom.on, panX: 0, panY: 0 }))}
                 canvasRef={courtRef}
@@ -627,6 +649,7 @@ function PlayerPane({
           </div>
           <GraphFrame
             caption="Full shot"
+            hint="Ball height versus distance to the rim."
             zoom={fullZoom}
             onToggle={() => setFullZoom((zoom) => ({ on: !zoom.on, panX: 0, panY: 0 }))}
             canvasRef={fullRef}
@@ -643,6 +666,7 @@ function PlayerPane({
           />
         </div>
         <div className="transport">
+          <span className="transport-label">Playback</span>
           <button
             type="button"
             onClick={() => {
@@ -679,7 +703,7 @@ function PlayerPane({
           />
         </div>
         <p className="note tempo-note">
-          Quarter speed. Each dot is 0.04 seconds{byType ? "" : ", and amber on the close-up is slower"}.
+          Quarter speed. Each dot is 0.04 seconds{byType ? "." : ". Lighter blue on the close-up is slower."}
         </p>
         {view === "average" ? <BreakdownTable shots={player.shots} filters={filters} /> : null}
       </div>
@@ -702,14 +726,19 @@ function PlayerPane({
               const showDate = !previous || previous.d !== shot.d;
               return (
                 <div key={shotId(shot)}>
-                  {showDate ? <p className="note">{formatDate(shot.d)}</p> : null}
+                  {showDate ? <p className="shot-date">{formatDate(shot.d)}</p> : null}
                   <button
                     type="button"
                     className="shot"
                     aria-selected={shotId(shot) === selectedId}
                     onClick={() => chooseShot(shot)}
                   >
-                    Q{shot.p} {shot.c} · {shot.m ? "Make" : "Miss"}
+                    <span className="shot-line">
+                      <span>
+                        Q{shot.p} {shot.c}
+                      </span>
+                      <span className={shot.m ? "result-make" : "result-miss"}>{shot.m ? "Make" : "Miss"}</span>
+                    </span>
                     <small>
                       {shot.a} · {STYLE_LABEL[shot.s]} · {CONTEST_LABEL[shot.k]} · {RANGE_LABEL[shot.r]}
                     </small>
@@ -731,6 +760,7 @@ function BreakdownTable({ shots, filters }: { shots: Shot[]; filters: Filters })
   return (
     <div className="breakdown">
       <h3 className="section">Open versus contested</h3>
+      <p className="context">Open minus contested, split by shot type. Style and contest filters stay expanded so both sides remain visible.</p>
       <table>
         <thead>
           <tr>
@@ -758,10 +788,7 @@ function BreakdownTable({ shots, filters }: { shots: Shot[]; filters: Filters })
             </tr>
           ))}
         </tbody>
-        <caption>
-          Differences are open minus contested, split by shot type. Range and result filters apply. The style and contest
-          filters stay expanded here so both sides remain visible.
-        </caption>
+        <caption>Range and result filters apply to every row.</caption>
       </table>
     </div>
   );
@@ -915,23 +942,23 @@ function Choice<T extends string>({
   return (
     <fieldset className="choice">
       <legend>{label}</legend>
-      <div className="choice-list" role="group" aria-label={label}>
+      <div className="segment" data-count={options.length} role="group" aria-label={label}>
         {options.map(([id, text, hint]) => (
-          <button key={id} type="button" aria-pressed={value === id} onClick={() => onChange(id)}>
-            <span>{text}</span>
-            {hint ? <small>{hint}</small> : null}
+          <button key={id} type="button" aria-pressed={value === id} title={hint} onClick={() => onChange(id)}>
+            {text}
           </button>
         ))}
       </div>
+      {options.find(([id]) => id === value)?.[2] ? <p className="choice-hint">{options.find(([id]) => id === value)?.[2]}</p> : null}
     </fieldset>
   );
 }
 
-function Stat({ label, value }: { label: string; value: string }) {
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "make" | "miss" }) {
   return (
-    <div>
-      <strong>{value}</strong>
+    <div className={tone ? `kpi kpi-${tone}` : "kpi"}>
       <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -1048,6 +1075,7 @@ function clipToRelease(points: CurvePoint[]): CurvePoint[] {
 
 function GraphFrame({
   caption,
+  hint,
   zoom,
   onToggle,
   canvasRef,
@@ -1059,6 +1087,7 @@ function GraphFrame({
   onPointerCancel,
 }: {
   caption: string;
+  hint?: string;
   zoom?: GraphZoom;
   onToggle?: () => void;
   canvasRef: RefObject<HTMLCanvasElement | null>;
@@ -1071,7 +1100,10 @@ function GraphFrame({
 }) {
   return (
     <figure className={frameClass ? `graph-frame ${frameClass}` : "graph-frame"}>
-      <figcaption>{caption}</figcaption>
+      <figcaption>
+        {caption}
+        {hint ? <span className="graph-hint">{hint}</span> : null}
+      </figcaption>
       <div className={zoom?.on ? "graph zoomed" : "graph"}>
         {zoom && onToggle ? (
           <button

@@ -5,6 +5,17 @@ const COURT_W = 50;
 const COURT_H = 47;
 const HOOP_X = 25;
 const HOOP_Y = 5.25;
+const INK = "#0c2340";
+const INK_SOFT = "rgba(12, 35, 64, 0.55)";
+const GRID = "rgba(12, 35, 64, 0.12)";
+const GRID_MID = "rgba(12, 35, 64, 0.28)";
+const COURT_FILL = "#e7eef6";
+const COURT_LINE = "rgba(12, 35, 64, 0.72)";
+const LANE_FILL = "rgba(12, 35, 64, 0.06)";
+const MAKE = "#1b7a46";
+const MISS = "#b42318";
+const LEAGUE = "#2f6fad";
+const FONT = "Inter, 'Segoe UI', sans-serif";
 
 export type ScreenRect = { x0: number; y0: number; scale: number };
 
@@ -76,7 +87,7 @@ export function drawCourt(
   const layout = courtLayout(width, height);
   const pt = (x: number, y: number) => courtToScreen(x, y, layout);
 
-  ctx.fillStyle = "#1c2116";
+  ctx.fillStyle = COURT_FILL;
   ctx.beginPath();
   ctx.roundRect(layout.x0, layout.y0, COURT_W * layout.scale, COURT_H * layout.scale, 6);
   ctx.fill();
@@ -85,7 +96,7 @@ export function drawCourt(
 
   if (selected) {
     ctx.lineWidth = 1.5;
-    ctx.strokeStyle = "rgba(226, 182, 87, 0.9)";
+    ctx.strokeStyle = INK;
     ctx.beginPath();
     selected.path.forEach((point, index) => {
       const [sx, sy] = pt(point[4], point[5]);
@@ -94,7 +105,7 @@ export function drawCourt(
     });
     ctx.stroke();
     if (selected.foot.length > 1) {
-      ctx.strokeStyle = "rgba(243, 239, 228, 0.7)";
+      ctx.strokeStyle = INK_SOFT;
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       selected.foot.forEach((point, index) => {
@@ -107,7 +118,7 @@ export function drawCourt(
     }
     if (selected.def) {
       const [dx, dy] = pt(selected.def[0], selected.def[1]);
-      ctx.fillStyle = "#8eb7e0";
+      ctx.fillStyle = LEAGUE;
       ctx.fillRect(dx - 3.5, dy - 3.5, 7, 7);
     }
   }
@@ -115,11 +126,11 @@ export function drawCourt(
   for (const mark of shots) {
     const [sx, sy] = pt(mark.x, mark.y);
     ctx.beginPath();
-    ctx.fillStyle = mark.selected ? "#f3efe4" : mark.shot.m ? "#7dbe8a" : "#d4846a";
+    ctx.fillStyle = mark.shot.m ? MAKE : MISS;
     ctx.arc(sx, sy, mark.selected ? 5.5 : 3.2, 0, Math.PI * 2);
     ctx.fill();
     if (mark.selected) {
-      ctx.strokeStyle = "#e2b657";
+      ctx.strokeStyle = INK;
       ctx.lineWidth = 2;
       ctx.stroke();
     }
@@ -151,9 +162,9 @@ function strokeHalfCourt(
   pt: (x: number, y: number) => [number, number],
   scale: number,
 ) {
-  ctx.strokeStyle = "rgba(236, 224, 196, 0.82)";
+  ctx.strokeStyle = COURT_LINE;
   ctx.lineWidth = 1.25;
-  ctx.fillStyle = "rgba(236, 224, 196, 0.05)";
+  ctx.fillStyle = LANE_FILL;
 
   const boundary = [pt(0, 0), pt(COURT_W, 0), pt(COURT_W, COURT_H), pt(0, COURT_H)];
   trace(ctx, [...boundary, boundary[0]]);
@@ -202,7 +213,7 @@ function drawRim(
 ) {
   const [bx1, by1] = pt(22, 4);
   const [bx2, by2] = pt(28, 4);
-  ctx.strokeStyle = emphasis ? "#e2b657" : "rgba(236, 224, 196, 0.82)";
+  ctx.strokeStyle = emphasis ? INK : COURT_LINE;
   ctx.lineWidth = 2;
   ctx.beginPath();
   ctx.moveTo(bx1, by1);
@@ -214,8 +225,8 @@ function drawRim(
   ctx.arc(hx, hy, emphasis ? Math.max(4, 0.75 * scale) : 0.75 * scale, 0, Math.PI * 2);
   ctx.stroke();
   if (!emphasis) return;
-  ctx.fillStyle = "#e2b657";
-  ctx.font = "11px 'Avenir Next', 'Segoe UI', sans-serif";
+  ctx.fillStyle = INK;
+  ctx.font = `11px ${FONT}`;
   ctx.fillText("Rim", hx + 8, hy - 8);
 }
 
@@ -302,7 +313,7 @@ export function drawFloor(
   const { pt, scale } = focusCourt(region.w, region.h, spots);
   const [fx0, fy0] = pt(0, 0);
   const [fx1, fy1] = pt(COURT_W, COURT_H);
-  ctx.fillStyle = "#1c2116";
+  ctx.fillStyle = COURT_FILL;
   ctx.beginPath();
   ctx.rect(fx0, fy0, fx1 - fx0, fy1 - fy0);
   ctx.fill();
@@ -343,7 +354,7 @@ export function drawFloor(
       ctx.stroke();
     }
     if (track.foot.length > 1) {
-      ctx.strokeStyle = "rgba(243, 239, 228, 0.85)";
+      ctx.strokeStyle = INK_SOFT;
       ctx.lineWidth = 1.6;
       ctx.setLineDash([4, 3]);
       ctx.beginPath();
@@ -361,30 +372,30 @@ export function drawFloor(
 
   if (feet) {
     const [x, y] = pt(feet.x, feet.y);
-    ctx.fillStyle = "#f3efe4";
+    ctx.fillStyle = "#ffffff";
     ctx.beginPath();
     ctx.arc(x, y, 5.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "#e2b657";
+    ctx.strokeStyle = INK;
     ctx.lineWidth = 1.5;
     ctx.stroke();
-    ctx.fillStyle = "rgba(243, 239, 228, 0.85)";
-    ctx.font = "11px 'Avenir Next', 'Segoe UI', sans-serif";
+    ctx.fillStyle = INK;
+    ctx.font = `11px ${FONT}`;
     ctx.fillText("Feet", x + 8, y + 4);
   }
   if (ball) {
     const [x, y] = pt(ball.x, ball.y);
-    ctx.fillStyle = "#f6f1e4";
+    ctx.fillStyle = "#f4f1ea";
     ctx.beginPath();
     ctx.arc(x, y, 4.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "#1a1c14";
+    ctx.strokeStyle = INK;
     ctx.lineWidth = 1;
     ctx.stroke();
   }
 
-  ctx.fillStyle = "rgba(243, 239, 228, 0.8)";
-  ctx.font = "11px 'Avenir Next', 'Segoe UI', sans-serif";
+  ctx.fillStyle = INK_SOFT;
+  ctx.font = `11px ${FONT}`;
   ctx.fillText(distance == null ? "Floor" : `${distance.toFixed(0)} ft from the rim`, 8, 14);
   ctx.restore();
 }
@@ -410,9 +421,9 @@ function strokeLine(
 
 function speedColor(feetPerSecond: number): string {
   const mix = Math.min(1, Math.max(0, (feetPerSecond - 6) / 16));
-  const r = Math.round(226 + (243 - 226) * mix);
-  const g = Math.round(182 + (239 - 182) * mix);
-  const b = Math.round(87 + (228 - 87) * mix);
+  const r = Math.round(142 + (12 - 142) * mix);
+  const g = Math.round(171 + (35 - 171) * mix);
+  const b = Math.round(201 + (64 - 201) * mix);
   return `rgb(${r}, ${g}, ${b})`;
 }
 
@@ -448,17 +459,17 @@ function drawTicks(
     const x = sx(tick.f);
     const y = sy(tick.z);
     ctx.beginPath();
-    ctx.fillStyle = "#14170f";
-    ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.arc(x, y, 3.4, 0, Math.PI * 2);
     ctx.fill();
     ctx.beginPath();
-    ctx.fillStyle = "#f3efe4";
+    ctx.fillStyle = INK;
     ctx.arc(x, y, 2, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
-const ARC_PAD = { left: 46, right: 18, top: 28, bottom: 32 };
+const ARC_PAD = { left: 46, right: 32, top: 28, bottom: 32 };
 
 function flightFrame(points: { f: number; z: number }[], rimDist: number | null) {
   let fMin = -1.5;
@@ -581,10 +592,10 @@ export function drawArc(
   const sx = (f: number) => pad.left + ((f - fMin) / (fMax - fMin)) * plotW;
   const sy = (z: number) => pad.top + ((zMax - z) / zSpan) * plotH;
 
-  ctx.strokeStyle = "rgba(243, 239, 228, 0.12)";
-  ctx.fillStyle = "rgba(243, 239, 228, 0.55)";
+  ctx.strokeStyle = GRID;
+  ctx.fillStyle = INK_SOFT;
   ctx.lineWidth = 1;
-  ctx.font = "11px 'Avenir Next', 'Segoe UI', sans-serif";
+  ctx.font = `11px ${FONT}`;
   const zStep = (options?.tight ?? false) ? 1 : zSpan <= 8 ? 1 : zSpan <= 14 ? 2 : 5;
   for (let z = Math.ceil(zMin / zStep) * zStep; z <= zMax + 0.01; z += zStep) {
     ctx.beginPath();
@@ -595,23 +606,23 @@ export function drawArc(
   }
   ctx.fillText("ft", 8, 12);
   if ((options?.tight ?? false) && zMin <= 0 && zMax >= 0) {
-    ctx.strokeStyle = "rgba(243, 239, 228, 0.4)";
+    ctx.strokeStyle = GRID_MID;
     ctx.beginPath();
     ctx.moveTo(pad.left, sy(0));
     ctx.lineTo(viewW - pad.right, sy(0));
     ctx.stroke();
   }
 
-  ctx.strokeStyle = "rgba(243, 239, 228, 0.35)";
+  ctx.strokeStyle = GRID_MID;
   ctx.beginPath();
   ctx.moveTo(sx(0), pad.top);
   ctx.lineTo(sx(0), viewH - pad.bottom);
   ctx.stroke();
-  ctx.fillStyle = "rgba(243, 239, 228, 0.7)";
+  ctx.fillStyle = INK;
   ctx.fillText("Release", sx(0) + 6, pad.top + 12);
 
   if (!fit && zMin <= 10 && zMax >= 10) {
-    ctx.strokeStyle = "rgba(226, 182, 87, 0.45)";
+    ctx.strokeStyle = "rgba(47, 111, 173, 0.45)";
     ctx.beginPath();
     ctx.moveTo(pad.left, sy(10));
     ctx.lineTo(viewW - pad.right, sy(10));
@@ -619,7 +630,7 @@ export function drawArc(
   }
 
   if (!fit && rimDist != null) {
-    ctx.strokeStyle = "#e2b657";
+    ctx.strokeStyle = INK;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(sx(rimDist), sy(10), 7, 0, Math.PI * 2);
@@ -661,7 +672,7 @@ export function drawArc(
           ctx.lineTo(sx(lo[index].f), sy(lo[index].z));
         }
         ctx.closePath();
-        ctx.fillStyle = "rgba(243, 239, 228, 0.13)";
+        ctx.fillStyle = "rgba(12, 35, 64, 0.08)";
         ctx.fill();
       }
     }
@@ -687,18 +698,18 @@ export function drawArc(
   if (options?.ticks?.length) drawTicks(ctx, options.ticks, sx, sy);
 
   if (ball) {
-    ctx.fillStyle = "#f6f1e4";
+    ctx.fillStyle = "#f4f1ea";
     ctx.beginPath();
     ctx.arc(sx(ball.f), sy(ball.z), 5.5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "#1a1c14";
+    ctx.strokeStyle = INK;
     ctx.lineWidth = 1;
     ctx.stroke();
   }
 
   if (clipPaths) ctx.restore();
 
-  ctx.fillStyle = "rgba(243, 239, 228, 0.7)";
+  ctx.fillStyle = INK_SOFT;
   ctx.fillText(options?.compact ? "To basket" : "Feet toward the basket", pad.left, viewH - 8);
   ctx.restore();
   if (region) ctx.restore();
@@ -717,17 +728,19 @@ export function drawLaunch(
   ctx.save();
   ctx.lineJoin = "round";
   ctx.lineCap = "round";
-  ctx.font = "12px 'Avenir Next', 'Segoe UI', sans-serif";
+  ctx.font = `12px ${FONT}`;
 
-  const originX = 36;
-  const originY = height - 28;
-  const radius = Math.max(40, Math.min(width - originX - 36, originY - 96));
+  const compact = height < 280 || width < 360;
+  const originX = compact ? 28 : 36;
+  const originY = height - (compact ? 22 : 28);
+  const textBlock = compact ? 80 : 96;
+  const radius = Math.max(36, Math.min(width - originX - (compact ? 24 : 40), originY - textBlock));
   const at = (degrees: number, length: number): [number, number] => {
     const radians = (Math.min(LAUNCH_SPAN, Math.max(0, degrees)) * Math.PI) / 180;
     return [originX + Math.cos(radians) * length, originY - Math.sin(radians) * length];
   };
 
-  ctx.strokeStyle = "rgba(243, 239, 228, 0.35)";
+  ctx.strokeStyle = GRID_MID;
   ctx.lineWidth = 1.25;
   ctx.beginPath();
   ctx.moveTo(originX, originY);
@@ -735,23 +748,29 @@ export function drawLaunch(
   ctx.lineTo(flatX, flatY);
   ctx.stroke();
 
-  ctx.strokeStyle = "rgba(243, 239, 228, 0.28)";
+  ctx.strokeStyle = GRID;
   ctx.beginPath();
   ctx.arc(originX, originY, radius, -((LAUNCH_SPAN * Math.PI) / 180), 0);
   ctx.stroke();
 
-  ctx.fillStyle = "rgba(243, 239, 228, 0.55)";
+  ctx.fillStyle = INK_SOFT;
   ctx.textAlign = "center";
-  for (let degrees = 0; degrees <= LAUNCH_SPAN; degrees += 10) {
+  ctx.font = `11px ${FONT}`;
+  const step = radius < 105 ? 30 : radius < 145 ? 20 : 10;
+  let lastLabel: [number, number] | null = null;
+  for (let degrees = 0; degrees <= LAUNCH_SPAN; degrees += step) {
     const [innerX, innerY] = at(degrees, radius - 8);
     const [outerX, outerY] = at(degrees, radius);
-    ctx.strokeStyle = "rgba(243, 239, 228, 0.45)";
+    ctx.strokeStyle = GRID_MID;
     ctx.beginPath();
     ctx.moveTo(innerX, innerY);
     ctx.lineTo(outerX, outerY);
     ctx.stroke();
-    const [labelX, labelY] = at(degrees, radius + 16);
+    const [labelX, labelY] = at(degrees, radius + (compact ? 12 : 16));
+    if (lastLabel && Math.hypot(labelX - lastLabel[0], labelY - lastLabel[1]) < 16) continue;
+    if (labelX < 8 || labelX > width - 8 || labelY < textBlock - 8 || labelY > height - 4) continue;
     ctx.fillText(`${degrees}`, labelX, labelY + 4);
+    lastLabel = [labelX, labelY];
   }
 
   const strokeRay = (degrees: number, color: string, lineWidth: number, dash: number[], length: number) => {
@@ -767,22 +786,27 @@ export function drawLaunch(
     ctx.restore();
   };
 
-  if (league != null) strokeRay(league, "#e2b657", 2.4, [7, 5], radius * 0.96);
-  if (player != null) strokeRay(player, "#f3efe4", 2.8, [], radius * 0.78);
+  if (league != null) strokeRay(league, LEAGUE, 2.4, [7, 5], radius * 0.96);
+  if (player != null) strokeRay(player, INK, 2.8, [], radius * 0.78);
 
   ctx.textAlign = "left";
-  ctx.fillStyle = "#f3efe4";
-  ctx.font = "600 28px 'Avenir Next', 'Segoe UI', sans-serif";
-  ctx.fillText(player == null ? "—" : `${player.toFixed(0)}°`, 12, 32);
-  ctx.font = "12px 'Avenir Next', 'Segoe UI', sans-serif";
-  ctx.fillStyle = "rgba(243, 239, 228, 0.72)";
-  ctx.fillText("Player", 12, 50);
-  ctx.fillStyle = "#e2b657";
-  ctx.fillText(league == null ? "League —" : `League ${league.toFixed(0)}°`, 12, 68);
+  const numberY = compact ? 20 : 32;
+  const playerY = compact ? 36 : 50;
+  const leagueY = compact ? 50 : 68;
+  const gapY = compact ? 64 : 86;
+  ctx.fillStyle = INK;
+  ctx.font = `600 ${compact ? 18 : 28}px ${FONT}`;
+  ctx.fillText(player == null ? "—" : `${player.toFixed(0)}°`, 12, numberY);
+  ctx.font = `${compact ? 11 : 12}px ${FONT}`;
+  ctx.fillStyle = INK_SOFT;
+  ctx.fillText("Player", 12, playerY);
+  ctx.fillStyle = LEAGUE;
+  ctx.fillText(league == null ? "League —" : `League ${league.toFixed(0)}°`, 12, leagueY);
   if (player != null && league != null) {
     const gap = player - league;
     const sign = gap > 0.5 ? "+" : "";
-    ctx.fillText(`${sign}${gap.toFixed(0)}° vs league`, 12, 86);
+    ctx.fillStyle = INK;
+    ctx.fillText(`${sign}${gap.toFixed(0)}° vs league`, 12, gapY);
   }
   ctx.restore();
 }
