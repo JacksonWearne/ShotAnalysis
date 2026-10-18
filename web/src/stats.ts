@@ -451,7 +451,11 @@ export function displayRange(shot: Shot): ShotRange {
   return isBehindThree(spot[0], spot[1]) ? "three" : "mid";
 }
 
-export function compareGroups(shots: Shot[], filters: Filters): { label: string; color: string; dash: number[]; shots: Shot[] }[] {
+export function compareGroups(
+  shots: Shot[],
+  filters: Filters,
+  axis: "type" | "contest",
+): { label: string; color: string; dash: number[]; shots: Shot[] }[] {
   const groups: { label: string; color: string; dash: number[]; style?: ShotStyle; contest?: ShotContest }[] = [
     { label: "Catch and shoot", color: "#0c2340", dash: [], style: "catch_and_shoot" },
     { label: "Pull-up", color: "#2f6fad", dash: [], style: "pull_up" },
@@ -460,6 +464,8 @@ export function compareGroups(shots: Shot[], filters: Filters): { label: string;
     { label: "Contested", color: "#b42318", dash: [7, 5], contest: "contested" },
   ];
   return groups.flatMap((group) => {
+    if (axis === "type" && !group.style) return [];
+    if (axis === "contest" && !group.contest) return [];
     if (group.style && filters.style !== "all" && filters.style !== group.style) return [];
     if (group.contest && filters.contest !== "all" && filters.contest !== group.contest) return [];
     const matched = filterShots(shots, {

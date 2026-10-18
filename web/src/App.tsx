@@ -32,6 +32,8 @@ import {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+type Grouping = "median" | "type" | "contest";
+
 const DEFAULT_FILTERS: Filters = {
   style: "all",
   contest: "all",
@@ -98,7 +100,7 @@ export function App() {
   const [view, setView] = useState<View>("average");
   const [docsOpen, setDocsOpen] = useState(false);
   const [zoomPages, setZoomPages] = useState<Record<View, boolean>>({ average: false, individual: false });
-  const [showTypes, setShowTypes] = useState(false);
+  const [grouping, setGrouping] = useState<Grouping>("median");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [league, setLeague] = useState<LeagueCell[] | null>(null);
   const primary = usePlayer(playerId);
@@ -244,8 +246,8 @@ export function App() {
               filters={filters}
               view={view}
               zoomOn={zoomOn}
-              showTypes={showTypes}
-              onShowTypes={setShowTypes}
+              grouping={grouping}
+              onGrouping={setGrouping}
               onOpenIndividual={() => setView("individual")}
               league={league}
             />
@@ -257,8 +259,8 @@ export function App() {
               filters={filters}
               view={view}
               zoomOn={zoomOn}
-              showTypes={showTypes}
-              onShowTypes={setShowTypes}
+              grouping={grouping}
+              onGrouping={setGrouping}
               onOpenIndividual={() => setView("individual")}
               league={league}
             />
@@ -272,8 +274,8 @@ export function App() {
             filters={filters}
             view={view}
             zoomOn={zoomOn}
-            showTypes={showTypes}
-            onShowTypes={setShowTypes}
+            grouping={grouping}
+            onGrouping={setGrouping}
             onOpenIndividual={() => setView("individual")}
             league={league}
           />
@@ -291,8 +293,8 @@ function PlayerColumn({
   filters,
   view,
   zoomOn,
-  showTypes,
-  onShowTypes,
+  grouping,
+  onGrouping,
   onOpenIndividual,
   league,
 }: {
@@ -303,8 +305,8 @@ function PlayerColumn({
   filters: Filters;
   view: View;
   zoomOn: boolean;
-  showTypes: boolean;
-  onShowTypes: (value: boolean) => void;
+  grouping: Grouping;
+  onGrouping: (value: Grouping) => void;
   onOpenIndividual: () => void;
   league: LeagueCell[] | null;
 }) {
@@ -322,8 +324,8 @@ function PlayerColumn({
       filters={filters}
       view={view}
       zoomOn={zoomOn}
-      showTypes={showTypes}
-      onShowTypes={onShowTypes}
+      grouping={grouping}
+      onGrouping={onGrouping}
       onOpenIndividual={onOpenIndividual}
       league={league}
     />
@@ -335,8 +337,8 @@ function PlayerPane({
   filters,
   view,
   zoomOn,
-  showTypes,
-  onShowTypes,
+  grouping,
+  onGrouping,
   onOpenIndividual,
   league,
 }: {
@@ -344,8 +346,8 @@ function PlayerPane({
   filters: Filters;
   view: View;
   zoomOn: boolean;
-  showTypes: boolean;
-  onShowTypes: (value: boolean) => void;
+  grouping: Grouping;
+  onGrouping: (value: Grouping) => void;
   onOpenIndividual: () => void;
   league: LeagueCell[] | null;
 }) {
@@ -391,8 +393,11 @@ function PlayerPane({
   const filtered = useMemo(() => filterShots(player.shots, filters), [player, filters]);
   const selected = filtered.find((shot) => shotId(shot) === selectedId) ?? null;
   const median = useMemo(() => medianShot(filtered), [filtered]);
-  const byType = view === "average" && showTypes;
-  const groups = useMemo(() => (byType ? compareGroups(player.shots, filters) : []), [player, filters, byType]);
+  const grouped = view === "average" && grouping !== "median";
+  const groups = useMemo(
+    () => (grouped ? compareGroups(player.shots, filters, grouping === "contest" ? "contest" : "type") : []),
+    [player, filters, grouped, grouping],
+  );
   const groupCurves = useMemo(
     () =>
       groups
@@ -403,17 +408,18 @@ function PlayerPane({
   const stats = useMemo(() => summarize(filtered), [filtered]);
   const leagueMean = useMemo(() => (league ? leagueAngle(league, filters) : null), [league, filters]);
   const gatherCurves = useMemo(() => {
-    if (byType) {
+    if (grouped) {
       return groupCurves.map((group) => ({
+        label: group.label,
         color: group.color,
         dash: group.dash,
         shot: group.shot as Shot | null,
         points: medianGather(group.shots),
       }));
     }
-    return [{ color: "#0c2340", dash: [] as number[], shot: median, points: medianGather(filtered) }];
-  }, [byType, groupCurves, filtered, median]);
-  const representative = (byType ? groupCurves[0]?.shot : median) ?? median;
+    return [{ label: "", color: "#0c2340", dash: [] as number[], shot: median, points: medianGather(filtered) }];
+  }, [grouped, groupCurves, filtered, median]);
+  const representative = (grouped ? groupCurves[0]?.shot : median) ?? median;
   const playback = (view === "individual" ? selected ?? median : representative) ?? null;
   const activePath = playback ? clipFlight(playback) : [];
   const t0 = activePath[0]?.[0] ?? 0;
@@ -453,7 +459,7 @@ function PlayerPane({
     playRef.current.playing = false;
     setPlayTime(start);
     setPlaying(false);
-  }, [medianKey, byType]);
+  }, [medianKey, grouping]);
 
   useEffect(() => {
     if (view !== "individual") return;
@@ -502,7 +508,7 @@ function PlayerPane({
     const sample = activePath.length ? samplePath(activePath, playRef.current.time) : null;
     const ball = sample ? { f: sample[1], z: sample[3] } : null;
     const typeLines = groupCurves.filter((group) => group.shot.path.length > 1);
-    const fullSeries = byType
+    const fullSeries = grouped
       ? typeLines.map((group) => ({
           points: asCurve(group.shot),
           color: group.color,
@@ -575,10 +581,10 @@ function PlayerPane({
           {
             points,
             color: group.color,
-            width: byType ? 2.6 : 3,
+            width: grouped ? 2.6 : 3,
             dash: group.dash,
             band: false,
-            tempo: !byType && group.points.length >= 2,
+            tempo: !grouped && group.points.length >= 2,
           },
         ];
       });
@@ -679,12 +685,17 @@ function PlayerPane({
           </div>
           {view === "average" ? (
             <div className="views" role="group" aria-label="Typical shot">
-              <button type="button" aria-pressed={!showTypes} onClick={() => onShowTypes(false)}>
-                Median
-              </button>
-              <button type="button" aria-pressed={showTypes} onClick={() => onShowTypes(true)}>
-                By type
-              </button>
+              {(
+                [
+                  ["median", "Median"],
+                  ["type", "By type"],
+                  ["contest", "By contest"],
+                ] as const
+              ).map(([id, label]) => (
+                <button key={id} type="button" aria-pressed={grouping === id} onClick={() => onGrouping(id)}>
+                  {label}
+                </button>
+              ))}
             </div>
           ) : null}
         </div>
@@ -711,7 +722,7 @@ function PlayerPane({
         ) : (
           <p className="note">No shots match these filters.</p>
         )}
-        {view === "average" && showTypes ? (
+        {view === "average" && grouped ? (
           <div className="legend">
             {groupCurves.map((group) => (
               <span key={group.label}>
@@ -877,7 +888,7 @@ function PlayerPane({
           />
         </div>
         <p className="note tempo-note">
-          Quarter speed. Each dot is 0.04 seconds{byType ? "." : ". Lighter blue on the close-up is slower."}
+          Quarter speed. Each dot is 0.04 seconds{grouped ? "." : ". Lighter blue on the close-up is slower."}
         </p>
         {view === "average" ? <BreakdownTable shots={player.shots} filters={filters} /> : null}
       </div>
@@ -1119,7 +1130,7 @@ const DOC_SECTIONS: { title: string; note?: string; items: { term: string; text:
     items: [
       {
         term: "Pre-release",
-        text: "On Average, the line is the median path into the release. The shade is the middle half of those paths, from the 25th to the 75th percentile, so the line sits inside it. A thinner shade is a more consistent gather. On Individual, a 3D view of that path on the court. The dotted line is the ball after release. Drag to move the camera, and Reset returns to a side view of the shot. Lighter blue is a slower part of the move.",
+        text: "On Average, the line is the median path into the release. The shade is the middle half of those paths, from the 25th to the 75th percentile, so the line sits inside it. A thinner shade is a more consistent gather. By type compares catch-and-shoot, pull-up, and other. By contest compares open and contested. On Individual, a 3D view of that path on the court. The dotted line is the ball after release. Drag to move the camera, and Reset returns to a side view of the shot. Lighter blue is a slower part of the move.",
       },
       {
         term: "Launch angle",
