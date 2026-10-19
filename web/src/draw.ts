@@ -789,6 +789,7 @@ export function drawLaunch(
   height: number,
   player: number | null,
   league: number | null,
+  groups?: { label: string; color: string; dash: number[]; angle: number | null }[] | null,
 ) {
   ctx.clearRect(0, 0, width, height);
   ctx.save();
@@ -797,9 +798,11 @@ export function drawLaunch(
   ctx.font = `12px ${FONT}`;
 
   const compact = height < 280 || width < 360;
+  const grouped = groups != null && groups.length > 0;
   const originX = compact ? 28 : 36;
   const originY = height - (compact ? 22 : 28);
-  const textBlock = compact ? 80 : 96;
+  const lineH = compact ? 14 : 16;
+  const textBlock = grouped ? 12 + (groups.length + 1) * lineH : compact ? 80 : 96;
   const radius = Math.max(36, Math.min(width - originX - (compact ? 24 : 40), originY - textBlock));
   const at = (degrees: number, length: number): [number, number] => {
     const radians = (Math.min(LAUNCH_SPAN, Math.max(0, degrees)) * Math.PI) / 180;
@@ -853,6 +856,24 @@ export function drawLaunch(
   };
 
   if (league != null) strokeRay(league, LEAGUE, 2.4, [7, 5], radius * 0.96);
+  if (grouped) {
+    groups.forEach((group, index) => {
+      if (group.angle == null) return;
+      const length = radius * Math.min(0.9, 0.62 + index * 0.08);
+      strokeRay(group.angle, group.color, 2.6, group.dash, length);
+    });
+    ctx.textAlign = "left";
+    ctx.font = `600 ${compact ? 11 : 12}px ${FONT}`;
+    groups.forEach((group, index) => {
+      ctx.fillStyle = group.color;
+      const value = group.angle == null ? "—" : `${group.angle.toFixed(0)}°`;
+      ctx.fillText(`${group.label}  ${value}`, 12, 16 + index * lineH);
+    });
+    ctx.fillStyle = LEAGUE;
+    ctx.fillText(league == null ? "League —" : `League  ${league.toFixed(0)}°`, 12, 16 + groups.length * lineH);
+    ctx.restore();
+    return;
+  }
   if (player != null) strokeRay(player, INK, 2.8, [], radius * 0.78);
 
   ctx.textAlign = "left";
@@ -877,12 +898,19 @@ export function drawLaunch(
   ctx.restore();
 }
 
+type SpreadRow = { label: string; unit: string; digits: number; median: number; p10: number; p25: number; p75: number; p90: number; domain: [number, number] };
+
 export function drawVariation(
   ctx: CanvasRenderingContext2D,
   width: number,
   height: number,
-  rows: { label: string; unit: string; digits: number; median: number; p10: number; p25: number; p75: number; p90: number; domain: [number, number] }[],
+  rows: SpreadRow[],
+  groups?: { color: string; rows: SpreadRow[] }[] | null,
 ) {
+  if (groups != null && groups.length > 0 && groups.some((group) => group.rows.length > 0)) {
+    drawGroupedVariation(ctx, width, height, groups.filter((group) => group.rows.length > 0));
+    return;
+  }
   ctx.clearRect(0, 0, width, height);
   ctx.save();
   ctx.font = `12px ${FONT}`;
@@ -978,6 +1006,73 @@ export function drawVariation(
       ctx.fillStyle = item.strong ? INK : INK_SOFT;
       ctx.font = item.strong ? `600 11px ${FONT}` : `11px ${FONT}`;
       ctx.fillText(item.text, item.start, belowY);
+    }
+  });
+  ctx.restore();
+}
+
+function drawGroupedVariation(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  groups: { color: string; rows: SpreadRow[] }[],
+) {
+  ctx.clearRect(0, 0, width, height);
+  ctx.save();
+  const count = groups[0].rows.length;
+  const rowH = height / count;
+  const padX = 10;
+  const gutter = 78;
+  groups[0].rows.forEach((template, index) => {
+    const series = groups.map((group) => ({ color: group.color, row: group.rows[index] })).filter((item) => item.row);
+    let low = Infinity;
+    let high = -Infinity;
+    for (const item of series) {
+      low = Math.min(low, item.row.domain[0]);
+      high = Math.max(high, item.row.domain[1]);
+    }
+    const span = Math.max(high - low, 1e-6);
+    const y = rowH * index;
+    const barH = Math.max(5, Math.min(8, (rowH - 8) / series.length - 6));
+    const stackH = series.length * barH + (series.length - 1) * 10;
+    let barY = y + (rowH - stackH) / 2;
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = INK;
+    ctx.font = `600 13px ${FONT}`;
+    ctx.fillText(template.label, padX, y + rowH / 2);
+
+    for (const item of series) {
+      const row = item.row;
+      const num = (value: number) => value.toFixed(row.digits);
+      const value = `${num(row.median)} ${row.unit}`;
+      ctx.font = `600 11px ${FONT}`;
+      const valueW = ctx.measureText(value).width;
+      const barX = padX + gutter;
+      const barW = Math.max(24, width - barX - padX - valueW - 8);
+      const xOf = (point: number) => barX + ((Math.min(high, Math.max(low, point)) - low) / span) * barW;
+      ctx.fillStyle = "rgba(12, 35, 64, 0.08)";
+      ctx.beginPath();
+      ctx.roundRect(barX, barY, barW, barH, 3);
+      ctx.fill();
+      ctx.globalAlpha = 0.28;
+      ctx.fillStyle = item.color;
+      ctx.beginPath();
+      ctx.roundRect(xOf(row.p10), barY, Math.max(2, xOf(row.p90) - xOf(row.p10)), barH, 3);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = item.color;
+      ctx.beginPath();
+      ctx.roundRect(xOf(row.p25), barY, Math.max(3, xOf(row.p75) - xOf(row.p25)), barH, 3);
+      ctx.fill();
+      const mark = xOf(row.median);
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(mark - 1, barY - 1, 2, barH + 2);
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = item.color;
+      ctx.fillText(value, barX + barW + 8, barY + barH / 2);
+      barY += barH + 10;
     }
   });
   ctx.restore();

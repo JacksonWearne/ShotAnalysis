@@ -47,11 +47,15 @@ export type Catalog = {
   players: IndexPlayer[];
 };
 
+export const STYLE_OPTIONS: ShotStyle[] = ["catch_and_shoot", "pull_up", "other"];
+export const CONTEST_OPTIONS: ShotContest[] = ["open", "contested"];
+export const RESULT_OPTIONS: ("make" | "miss")[] = ["make", "miss"];
+
 export type Filters = {
-  style: "all" | ShotStyle;
-  contest: "all" | ShotContest;
+  style: ShotStyle[];
+  contest: ShotContest[];
   range: "all" | "mid" | "three";
-  result: "all" | "make" | "miss";
+  result: ("make" | "miss")[];
 };
 
 export type View = "average" | "individual";

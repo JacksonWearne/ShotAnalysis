@@ -23,6 +23,9 @@ import {
   RANGE_LABEL,
   STYLE_LABEL,
   type Catalog,
+  CONTEST_OPTIONS,
+  RESULT_OPTIONS,
+  STYLE_OPTIONS,
   type Filters,
   type IndexPlayer,
   type PlayerFile,
@@ -34,12 +37,14 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 type Grouping = "median" | "type" | "contest";
 
-const DEFAULT_FILTERS: Filters = {
-  style: "all",
-  contest: "all",
-  range: "three",
-  result: "all",
-};
+function defaultFilters(): Filters {
+  return {
+    style: [...STYLE_OPTIONS],
+    contest: [...CONTEST_OPTIONS],
+    range: "three",
+    result: [...RESULT_OPTIONS],
+  };
+}
 
 const playerCache = new Map<number, Promise<PlayerFile>>();
 
@@ -96,7 +101,10 @@ export function App() {
   const [catalogError, setCatalogError] = useState("");
   const [playerId, setPlayerId] = useState<number | null>(null);
   const [compareId, setCompareId] = useState<number | null>(null);
-  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [filters, setFilters] = useState<Filters>(defaultFilters);
+  if (!Array.isArray(filters.style) || !Array.isArray(filters.contest) || !Array.isArray(filters.result)) {
+    setFilters(defaultFilters());
+  }
   const [view, setView] = useState<View>("average");
   const [docsOpen, setDocsOpen] = useState(false);
   const [zoomPages, setZoomPages] = useState<Record<View, boolean>>({ average: false, individual: false });
@@ -203,7 +211,6 @@ export function App() {
                 label="Style"
                 value={filters.style}
                 options={[
-                  ["all", "All"],
                   ["catch_and_shoot", "Catch and shoot", "No dribble, touch under 2 seconds"],
                   ["pull_up", "Pull-up"],
                   ["other", "Other"],
@@ -214,7 +221,6 @@ export function App() {
                 label="Contest"
                 value={filters.contest}
                 options={[
-                  ["all", "All"],
                   ["open", "Open", "Defender at least 4 feet away"],
                   ["contested", "Contested", "Defender inside 4 feet"],
                 ]}
@@ -224,7 +230,6 @@ export function App() {
                 label="Result"
                 value={filters.result}
                 options={[
-                  ["all", "All"],
                   ["make", "Makes"],
                   ["miss", "Misses"],
                 ]}
@@ -614,9 +619,24 @@ function PlayerPane({
       });
     }
     const launch = launchRef.current ? fitCanvas(launchRef.current) : null;
-    if (launch && view === "average") drawLaunch(launch.ctx, launch.width, launch.height, stats.angle, leagueMean);
+    if (launch && view === "average") {
+      const launchGroups = grouped
+        ? groupCurves.map((group) => ({
+            label: group.label,
+            color: group.color,
+            dash: group.dash,
+            angle: summarize(group.shots).angle,
+          }))
+        : null;
+      drawLaunch(launch.ctx, launch.width, launch.height, stats.angle, leagueMean, launchGroups);
+    }
     const spread = spreadRef.current ? fitCanvas(spreadRef.current) : null;
-    if (spread && view === "average") drawVariation(spread.ctx, spread.width, spread.height, shotSpread(filtered));
+    if (spread && view === "average") {
+      const spreadGroups = grouped
+        ? groupCurves.map((group) => ({ color: group.color, rows: shotSpread(group.shots) }))
+        : null;
+      drawVariation(spread.ctx, spread.width, spread.height, shotSpread(filtered), spreadGroups);
+    }
     if (court && view === "individual") {
       const marks = filtered
         .map((shot) => {
@@ -803,7 +823,11 @@ function PlayerPane({
             {view === "average" ? (
               <GraphFrame
                 caption="Launch angle"
-                hint="Solid line is this player. Dashed line is the league."
+                hint={
+                  grouped
+                    ? "Each colored line is one group. The blue dashed line is the league."
+                    : "Solid line is this player. Dashed line is the league."
+                }
                 info
                 canvasRef={launchRef}
                 canvasLabel="Launch angle versus the league"
@@ -813,7 +837,11 @@ function PlayerPane({
             {view === "average" ? (
               <GraphFrame
                 caption="Consistency"
-                hint="The number above the mark is the typical shot. Under the bar, the darker pair is half of the shots and the lighter pair is the outer edges."
+                hint={
+                  grouped
+                    ? "Each color is one group, on the same scale. The number is the typical shot. The solid bar is half of those shots, and the lighter bar is the outer edges."
+                    : "The number above the mark is the typical shot. Under the bar, the darker pair is half of the shots and the lighter pair is the outer edges."
+                }
                 info
                 canvasRef={spreadRef}
                 canvasLabel="Variation in release, launch, apex, touch, and defender"
@@ -1134,11 +1162,11 @@ const DOC_SECTIONS: { title: string; note?: string; items: { term: string; text:
       },
       {
         term: "Launch angle",
-        text: "The solid line is this player's mean launch angle. The dashed line is the league mean for jump shots with the same style, contest, range, and result.",
+        text: "The solid line is this player's mean launch angle. The dashed line is the league mean for jump shots with the same style, contest, range, and result. By type and By contest draw one colored line for each group.",
       },
       {
         term: "Consistency",
-        text: "Release, launch, apex, touch, and defender for the shots that match the filters. The number above the mark is the typical shot. Under the bar, the darker pair is where half of the shots land, and the lighter pair is the outer edges. A shorter solid bar is more consistent.",
+        text: "Release, launch, apex, touch, and defender for the shots that match the filters. The number above the mark is the typical shot. Under the bar, the darker pair is where half of the shots land, and the lighter pair is the outer edges. A shorter solid bar is more consistent. By type and By contest draw each group in its own color on the same scale.",
       },
       { term: "Full shot", text: "Ball height against distance to the rim." },
       { term: "Shot chart", text: "Green is a make, red is a miss. Click a spot to open that shot." },
@@ -1326,21 +1354,37 @@ function Choice<T extends string>({
   onChange,
 }: {
   label: string;
-  value: T;
+  value: readonly T[];
   options: readonly (readonly [T, string, string?])[];
-  onChange: (value: T) => void;
+  onChange: (value: T[]) => void;
 }) {
+  const picked = Array.isArray(value) ? value : options.map(([id]) => id);
+  const hints = options.filter(([id, , hint]) => hint && picked.includes(id));
   return (
     <fieldset className="choice">
       <legend>{label}</legend>
       <div className="segment" data-count={options.length} role="group" aria-label={label}>
-        {options.map(([id, text, hint]) => (
-          <button key={id} type="button" aria-pressed={value === id} title={hint} onClick={() => onChange(id)}>
-            {text}
-          </button>
-        ))}
+        {options.map(([id, text, hint]) => {
+          const on = picked.includes(id);
+          return (
+            <button
+              key={id}
+              type="button"
+              className={on ? "on" : undefined}
+              aria-pressed={on}
+              title={hint}
+              onClick={() => onChange(on ? picked.filter((item) => item !== id) : [...picked, id])}
+            >
+              {text}
+            </button>
+          );
+        })}
       </div>
-      {options.find(([id]) => id === value)?.[2] ? <p className="choice-hint">{options.find(([id]) => id === value)?.[2]}</p> : null}
+      {hints.map(([id, , hint]) => (
+        <p key={id} className="choice-hint">
+          {hint}
+        </p>
+      ))}
     </fieldset>
   );
 }

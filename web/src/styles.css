@@ -573,6 +573,7 @@ legend {
 
 .segment button:hover { border-color: var(--line-strong); }
 
+.segment button.on,
 .segment button[aria-pressed="true"] {
   background: var(--navy);
   border-color: var(--navy);

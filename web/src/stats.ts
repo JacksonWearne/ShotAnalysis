@@ -1,5 +1,5 @@
 import { isBehindThree, onHalfCourt } from "./court";
-import { STYLE_LABEL, type Filters, type Shot, type ShotContest, type ShotRange, type ShotStyle } from "./types";
+import { STYLE_LABEL, STYLE_OPTIONS, CONTEST_OPTIONS, type Filters, type Shot, type ShotContest, type ShotRange, type ShotStyle } from "./types";
 
 export type CurvePoint = {
   t: number;
@@ -87,11 +87,10 @@ export function filterShots(shots: Shot[], filters: Filters): Shot[] {
     if (!shotSpot(shot)) return false;
     if (!coherent(shot)) return false;
     if (shot.j !== 1 || shot.r === "rim") return false;
-    if (filters.style !== "all" && shot.s !== filters.style) return false;
-    if (filters.contest !== "all" && shot.k !== filters.contest) return false;
+    if (!filters.style.includes(shot.s)) return false;
+    if (!filters.contest.includes(shot.k)) return false;
     if (filters.range !== "all" && displayRange(shot) !== filters.range) return false;
-    if (filters.result === "make" && shot.m !== 1) return false;
-    if (filters.result === "miss" && shot.m !== 0) return false;
+    if (!filters.result.includes(shot.m === 1 ? "make" : "miss")) return false;
     return true;
   });
 }
@@ -399,11 +398,10 @@ export function leagueAngle(cells: LeagueCell[], filters: Filters): number | nul
   let total = 0;
   for (const cell of cells) {
     if (cell.j !== 1 || cell.r === "rim") continue;
-    if (filters.style !== "all" && cell.s !== filters.style) continue;
-    if (filters.contest !== "all" && cell.k !== filters.contest) continue;
+    if (!filters.style.includes(cell.s)) continue;
+    if (!filters.contest.includes(cell.k)) continue;
     if (filters.range !== "all" && cell.r !== filters.range) continue;
-    if (filters.result === "make" && cell.m !== 1) continue;
-    if (filters.result === "miss" && cell.m !== 0) continue;
+    if (!filters.result.includes(cell.m === 1 ? "make" : "miss")) continue;
     count += cell.n;
     total += cell.sum;
   }
@@ -466,12 +464,12 @@ export function compareGroups(
   return groups.flatMap((group) => {
     if (axis === "type" && !group.style) return [];
     if (axis === "contest" && !group.contest) return [];
-    if (group.style && filters.style !== "all" && filters.style !== group.style) return [];
-    if (group.contest && filters.contest !== "all" && filters.contest !== group.contest) return [];
+    if (group.style && !filters.style.includes(group.style)) return [];
+    if (group.contest && !filters.contest.includes(group.contest)) return [];
     const matched = filterShots(shots, {
       ...filters,
-      style: group.style ?? filters.style,
-      contest: group.contest ?? filters.contest,
+      style: group.style ? [group.style] : filters.style,
+      contest: group.contest ? [group.contest] : filters.contest,
     });
     if (matched.length < 5) return [];
     return [{ label: group.label, color: group.color, dash: group.dash, shots: matched }];
@@ -521,7 +519,7 @@ function fromSummary(summary: Summary): Omit<BreakdownRow, "label" | "depth" | "
 }
 
 export function contestBreakdown(shots: Shot[], filters: Filters): BreakdownRow[] {
-  const base = filterShots(shots, { ...filters, style: "all", contest: "all" });
+  const base = filterShots(shots, { ...filters, style: STYLE_OPTIONS, contest: CONTEST_OPTIONS });
   const buckets = (["open", "contested"] as const).map((contest) => {
     const group = base.filter((shot) => shot.k === contest);
     return {
